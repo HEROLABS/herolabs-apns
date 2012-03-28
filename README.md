@@ -1,8 +1,8 @@
 # A clojure Apple Push Notification library
 
 This small library provides a simple facility to send push messages to the
-"Apple push notification":http://developer.apple.com/library/mac/#documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/Introduction/Introduction.html
-service. The library uses "netty":http://netty.io for the asynchronous communication with the server.
+[Apple push notification](http://developer.apple.com/library/mac/#documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/Introduction/Introduction.html)
+service. The library uses [netty](http://netty.io) for the asynchronous communication with the server.
 
 
 ## Build
@@ -11,7 +11,7 @@ To build the api-doc plugin you'll have to clone the git repository.
 
     git clone git(at)github.com:HEROLABS/herolabs-apns.git
 
-Assuming that you have "Leiningen":https://github.com/technomancy/leiningen already installed. Simply execute
+Assuming that you have [Leiningen](https://github.com/technomancy/leiningen) already installed. Simply execute
 
     lein install
 
@@ -96,9 +96,9 @@ which Apple provides into the DER format using `openssl`
     openssl pkcs8 -topk8 -nocrypt -in key.pem -inform PEM -out key.der -outform DER
     openssl x509 -in cert.pem -inform PEM -out cert.der -outform DER
 
-Then you use a small java class ("source":http://www.agentbob.info/agentbob/80/version/default/part/AttachmentData/data/ImportKey.java or
-"compiled in Java 1.5":http://www.agentbob.info/agentbob/81/version/default/part/AttachmentData/data/ImportKey.class)
-created by "AgentBob - www.agentbob.info.":http://www.agentbob.info/
+Then you use a small java class ([source](http://www.agentbob.info/agentbob/80/version/default/part/AttachmentData/data/ImportKey.java) or
+[compiled in Java 1.5](http://www.agentbob.info/agentbob/81/version/default/part/AttachmentData/data/ImportKey.class))
+created by [AgentBob - www.agentbob.info.](http://www.agentbob.info/)
 
     java ImportKey key.der cert.der
 

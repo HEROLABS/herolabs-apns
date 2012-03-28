@@ -67,32 +67,27 @@
 
 (defn- connect [^InetSocketAddress address ^SSLContext ssl-context time-out & {:keys [exception-handler close-handler]}]
   "creates a netty Channel to connect to the server."
-  (try
-    (let [engine (ssl-engine ssl-context :use-client-mode true)
-          pipeline-factory (create-pipeline-factory engine (handler
-                                                             :exception-handler exception-handler
-                                                             :close-handler close-handler) time-out)
-          bootstrap (doto (-> (NioClientSocketChannelFactory.
-                                (Executors/newCachedThreadPool)
-                                (Executors/newCachedThreadPool))
-                            (ClientBootstrap.))
-        (.setOption "connectTimeoutMillis" 5000)
-        (.setPipelineFactory pipeline-factory))
-          future (.connect bootstrap address)
-          channel (-> future
-        (.awaitUninterruptibly)
-        (.getChannel)
-        )]
-      (if (.isSuccess future)
-        channel
-        (do
-          (.releaseExternalResources bootstrap)
-          nil
-          )
+  (let [engine (ssl-engine ssl-context :use-client-mode true)
+        pipeline-factory (create-pipeline-factory engine (handler
+                                                           :exception-handler exception-handler
+                                                           :close-handler close-handler) time-out)
+        bootstrap (doto (-> (NioClientSocketChannelFactory.
+                              (Executors/newCachedThreadPool)
+                              (Executors/newCachedThreadPool))
+                          (ClientBootstrap.))
+      (.setOption "connectTimeoutMillis" 5000)
+      (.setPipelineFactory pipeline-factory))
+        future (.connect bootstrap address)
+        channel (-> future
+      (.awaitUninterruptibly)
+      (.getChannel)
+      )]
+    (if (.isSuccess future)
+      channel
+      (do
+        (.releaseExternalResources bootstrap)
+        nil
         )
-      )
-    (catch java.lang.Exception e
-      (warn e "Error")
       )
     )
   )

@@ -1,6 +1,6 @@
 (ns herolabs.apns.protocol
   (:require [clj-json.core :as json])
-  (:import [org.jboss.netty.channel Channel]
+  (:import [org.jboss.netty.channel Channel ChannelHandlerContext]
            [org.jboss.netty.buffer ChannelBuffer ChannelBuffers]
            [java.nio ByteOrder]
            [org.apache.commons.codec.binary Hex]

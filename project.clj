@@ -1,7 +1,7 @@
 (defproject herolabs/apns "0.1.0"
   :description "A simple lightweight library to use with the Apple push notification service."
   :url "https://github.com/HEROLABS/herolabs-apns"
-  :dependencies [[org.clojure/clojure "1.2.1"]
+  :dependencies [[org.clojure/clojure "1.3.0"]
                  [commons-codec "1.6"]
                  [clj-json "0.5.0"]
                  [midje "1.3.1"]
@@ -12,5 +12,5 @@
                  [ch.qos.logback/logback-classic "1.0.0"]
                  ]
   :dev-dependencies [[lein-midje "1.0.7"]]
-  :aot :all
+  ; :aot :all
   )

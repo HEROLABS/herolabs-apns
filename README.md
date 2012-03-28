@@ -62,7 +62,7 @@ Now we have everything in place to create the SSLContext to user for the connect
 
 So let's create the connection:
 
-(def connection (push/create-connection (dev-address) ctx))
+    (def connection (push/create-connection (dev-address) ctx))
 
 Now lets send a message:
 

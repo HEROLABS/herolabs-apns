@@ -5,8 +5,8 @@
 
 (defn with-sound [message sound]
   (cond
-    (= :default sound) (update-in message [:apns ] #(dissoc % :sound ))
-    (= "default" sound) (update-in message [:apns ] #(dissoc % :sound ))
+    (= :default sound) (update-in message [:aps ] #(dissoc % :sound ))
+    (= "default" sound) (update-in message [:aps ] #(dissoc % :sound ))
     :else (assoc-in message [:aps :sound ] sound)
     )
   )

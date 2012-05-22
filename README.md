@@ -90,8 +90,16 @@ the ones used by the push service.
 
 ## Creating a JKS keystore
 
-Personally I used this [guide](http://www.agentbob.info/agentbob/79-AB.html). Basically you convert the PEM certificate
-which Apple provides into the DER format using `openssl`
+Personally I used this [guide](http://www.agentbob.info/agentbob/79-AB.html). Basically you convert the .P12 certificate
+file which Apple provides into the DER format using `openssl`. You do this in two steps, first you seperate PEM files for
+the key and the certifcate and then you generate the DER files
+
+Step 1:
+
+    openssl pkcs12 -nocerts -in your-cert.p12 -out key.pem -nodes
+    openssl pkcs12 -clcerts -nokeys -in your-cert.p12 -out cert.pem
+
+Step 2:
 
     openssl pkcs8 -topk8 -nocrypt -in key.pem -inform PEM -out key.der -outform DER
     openssl x509 -in cert.pem -inform PEM -out cert.der -outform DER

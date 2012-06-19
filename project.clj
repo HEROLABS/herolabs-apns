@@ -1,4 +1,4 @@
-(defproject herolabs/apns "0.1.5"
+(defproject herolabs/apns "0.1.6"
   :description "A simple lightweight library to use with the Apple push notification service."
   :url "https://github.com/HEROLABS/herolabs-apns"
   :dependencies [[org.clojure/clojure "1.3.0"]

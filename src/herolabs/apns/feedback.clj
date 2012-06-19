@@ -11,7 +11,7 @@
            [org.jboss.netty.handler.ssl SslHandler]
            [org.jboss.netty.handler.timeout ReadTimeoutHandler]
            [org.jboss.netty.util HashedWheelTimer]
-           [java.util.concurrent Executors]
+           [java.util.concurrent Executors ExecutorService ThreadFactory]
            [java.util.concurrent LinkedBlockingQueue TimeUnit]
            [java.net InetSocketAddress]
            [javax.net.ssl SSLContext]

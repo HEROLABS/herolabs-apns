@@ -28,7 +28,7 @@
                       sm (System/getSecurityManager)
                       group (if sm (.getThreadGroup sm) (.getThreadGroup (Thread/currentThread)))]
                   (reify ThreadFactory
-                    (newThread [_ r] (let [t (Thread. group r (str "apns-thread-pool-" (swap! number inc)) 0)
+                    (newThread [_ r] (let [t (Thread. group r (str "apns-push-pool-" (swap! number inc)) 0)
                                            t (if (.isDaemon t) (.setDaemon t false) t)
                                            t (if (not= Thread/NORM_PRIORITY (.getPriority t)) (.setPriority t Thread/NORM_PRIORITY) t)]
                                        t)))))))))

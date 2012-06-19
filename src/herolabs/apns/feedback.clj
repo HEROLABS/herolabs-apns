@@ -19,6 +19,20 @@
   )
 
 
+(defn default-thread-pool []
+  (or @default-thread-pool*
+    (swap! default-thread-pool*
+      (fn [_] (Executors/newCachedThreadPool
+                (let [number (atom 1)
+                      sm (System/getSecurityManager)
+                      group (if sm (.getThreadGroup sm) (.getThreadGroup (Thread/currentThread)))]
+                  (reify ThreadFactory
+                    (newThread [_ r] (let [t (Thread. group r (str "apns-feedback-" (swap! number inc)) 0)
+                                           t (if (.isDaemon t) (.setDaemon t false) t)
+                                           t (if (not= Thread/NORM_PRIORITY (.getPriority t)) (.setPriority t Thread/NORM_PRIORITY) t)]
+                                       t)))))))))
+
+
 (defn- handler [^LinkedBlockingQueue queue]
   "Function to create a ChannelUpstreamHandler"
   (proxy [org.jboss.netty.channel.SimpleChannelUpstreamHandler] []
@@ -39,10 +53,7 @@
         (.close))
       )
     (channelClosed [^ChannelHandlerContext ctx ^ChannelStateEvent event]
-      (debug "channelClosed")
-
-         )
-    ))
+      (debug "channelClosed"))))
 
 
 
@@ -56,20 +67,14 @@
           (.addLast "ssl" (SslHandler. ssl-engine))
           (.addLast "decoder" (feedback-decoder))
           (.addLast "timeout" (ReadTimeoutHandler. timer (int (if time-out time-out 300))))
-          (.addLast "handler" handler)
-          ))
-      )
-    )
-  )
+          (.addLast "handler" handler))))))
 
-(defn- connect [^InetSocketAddress address ^SSLContext ssl-context time-out queue]
+(defn- connect [^InetSocketAddress address ^SSLContext ssl-context time-out queue boss-executor worker-executor]
   "creates a netty Channel to connect to the server."
   (try
     (let [engine (ssl-engine ssl-context :use-client-mode true)
           pipeline-factory (create-pipeline-factory engine (handler queue) time-out)
-          bootstrap (doto (-> (NioClientSocketChannelFactory.
-                                (Executors/newCachedThreadPool)
-                                (Executors/newCachedThreadPool))
+          bootstrap (doto (-> (NioClientSocketChannelFactory. boss-executor worker-executor)
                             (ClientBootstrap.))
         (.setOption "connectTimeoutMillis" 5000)
         (.setPipelineFactory pipeline-factory))
@@ -87,10 +92,7 @@
         )
       )
     (catch java.lang.Exception e
-      (warn e "Error")
-      )
-    )
-  )
+      (warn e "Error"))))
 
 
 (defn- read-feedback [queue channel]
@@ -100,24 +102,17 @@
       (cons next (read-feedback queue channel))
       (when (.isConnected channel)
         (.close channel)
-        nil
-        )
-      )
-    )
-  )
+        nil))))
 
-(defn feedback [^InetSocketAddress address ^SSLContext ssl-context & {:keys [time-out] :or [time-out 300]}]
+(defn feedback [^InetSocketAddress address ^SSLContext ssl-context & {:keys [time-out boss-executor worker-executor]
+                                                                      :or {time-out 300
+                                                                           boss-executor (default-thread-pool)
+                                                                           worker-executor (default-thread-pool)}}]
   "Creates a seq with the results from the feedback service"
   (let [queue (LinkedBlockingQueue.)
-        channel (connect address ssl-context time-out queue)]
-      (read-feedback queue channel)
-    )
-  )
+        channel (connect address ssl-context time-out boss-executor worker-executor queue)]
+    (read-feedback queue channel)))
 
-(defn dev-address []
-  (InetSocketAddress. "feedback.sandbox.push.apple.com" 2196)
-  )
+(defn dev-address [] (InetSocketAddress. "feedback.sandbox.push.apple.com" 2196))
 
-(defn prod-address []
-  (InetSocketAddress. "feedback.push.apple.com" 2196)
-  )
+(defn prod-address [] (InetSocketAddress. "feedback.push.apple.com" 2196))

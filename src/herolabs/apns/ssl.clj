@@ -1,6 +1,6 @@
 (ns herolabs.apns.ssl
   (:use [clojure.tools.logging]
-    [clojure.java.io :only (input-stream)])
+        [clojure.java.io :only (input-stream)])
   (:import [java.security Security KeyStore]
            [javax.net.ssl KeyManager KeyManagerFactory SSLContext SSLEngine TrustManager TrustManagerFactory X509TrustManager]
            [java.security.cert X509Certificate CertificateException])
@@ -37,16 +37,25 @@
     )
   )
 
+(defn ssl-engine-factory [context & {:keys [use-client-mode] :or {use-client-mode true}}]
+  "Creates an SSL engine"
+  (fn [] (let [engine (.createSSLEngine context)]
+           (if use-client-mode
+             (doto engine (.setUseClientMode use-client-mode))
+             engine)
+           )))
+
+
 
 (defn naive-trust-managers [& {:keys [trace] :or [trace false]}]
   "Creates a very naive trust manager that will accept all certificates."
   (into-array (list (proxy [javax.net.ssl.X509TrustManager] []
-           (getAcceptedIssuers [] (make-array X509Certificate 0))
-           (checkClientTrusted [chain auth-type]
-             (when trace (info "Unknown client certificate:" (.getSubjectDN (get chain 0))))
-             )
-           (checkServerTrusted [chain auth-type]
-             (when trace (info "Unknown server certificate:" (.getSubjectDN (get chain 0))))
-             )
-           )))
+                      (getAcceptedIssuers [] (make-array X509Certificate 0))
+                      (checkClientTrusted [chain auth-type]
+                        (when trace (info "Unknown client certificate:" (.getSubjectDN (get chain 0))))
+                        )
+                      (checkServerTrusted [chain auth-type]
+                        (when trace (info "Unknown server certificate:" (.getSubjectDN (get chain 0))))
+                        )
+                      )))
   )

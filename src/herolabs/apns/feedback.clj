@@ -19,6 +19,8 @@
   )
 
 
+(def ^:private default-thread-pool* (atom nil))
+
 (defn default-thread-pool []
   (or @default-thread-pool*
     (swap! default-thread-pool*

@@ -112,7 +112,7 @@
                                                                            worker-executor (default-thread-pool)}}]
   "Creates a seq with the results from the feedback service"
   (let [queue (LinkedBlockingQueue.)
-        channel (connect address ssl-context time-out boss-executor worker-executor queue)]
+        channel (connect address ssl-context time-out queue boss-executor worker-executor)]
     (read-feedback queue channel)))
 
 (defn dev-address [] (InetSocketAddress. "feedback.sandbox.push.apple.com" 2196))

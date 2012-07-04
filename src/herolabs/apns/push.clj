@@ -75,13 +75,12 @@
 
 (defn- create-ssl-handler-factory [ssl-engine-factory] (fn [] (SslHandler. (ssl-engine-factory))))
 
-(defn- create-pipeline-factory [ssl-handler-factory protocoll-handler time-out]
+(defn- create-pipeline-factory [ssl-handler-factory protocoll-handler timer time-out]
   "Creates a pipeline factory"
   (reify
     ChannelPipelineFactory
     (getPipeline [this]
-      (let [id-gen (AtomicInteger.)
-            timer (HashedWheelTimer.)]
+      (let [id-gen (AtomicInteger.)]
         (doto (Channels/pipeline)
           (.addLast "ssl" (ssl-handler-factory))
           (.addLast "encoder" (encoder id-gen))
@@ -103,8 +102,9 @@
                         boss-executor worker-executor) (ClientBootstrap.))
         ssl-handler-factory (create-ssl-handler-factory engine-factory)
         client-handle (atom nil)
+        timer (HashedWheelTimer.)
         pipeline-factory (create-pipeline-factory ssl-handler-factory (handler bootstrap ssl-handler-factory client-handle
-                                                                        exception-handler) time-out)
+                                                                        exception-handler) timer time-out)
         bootstrap (doto bootstrap
       (.setOption "connectTimeoutMillis" 5000)
       (.setPipelineFactory pipeline-factory)

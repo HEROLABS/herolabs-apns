@@ -1,4 +1,4 @@
-(ns herolabs-test.apns
+(ns herolabs-test.apns.message
   (:use midje.sweet
         herolabs.apns.message
         ))

@@ -4,11 +4,7 @@
 (defn with-badge [message number] (assoc-in message [:aps :badge ] number))
 
 (defn with-sound [message sound]
-  (cond
-    (= :default sound) (update-in message [:aps ] #(dissoc % :sound ))
-    (= "default" sound) (update-in message [:aps ] #(dissoc % :sound ))
-    :else (assoc-in message [:aps :sound ] sound)
-    )
+  (assoc-in message [:aps :sound ] (name sound))
   )
 
 (defn with-standard-alert [message body]
@@ -45,3 +41,4 @@
     (assoc-in message [:aps :alert :body ] body)
     message)
   )
+

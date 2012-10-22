@@ -21,7 +21,8 @@
   to lookup the certificate. You may also specify :store-pass and :cert-pass for the keystore and certificate password
   or :trust-managers to provide an array of trust managers to use. "
   [& {:keys [keystore store-path store-pass store-type key-pass trust-managers algorithm]
-      :or {algorithm (or (Security/getProperty "ssl.KeyManagerFactory.algorithm") "SunX509")}}]
+      :or {algorithm (or (Security/getProperty "ssl.KeyManagerFactory.algorithm") "SunX509")
+           store-type "JCEKS"}}]
   (let [keystore (if keystore keystore (load-keystore store-path store-pass store-type))
         kmf (doto (KeyManagerFactory/getInstance algorithm)
       (.init keystore (char-array key-pass)))

@@ -35,7 +35,7 @@
 
 (def ^:private timer* (ref nil))
 
-(defn timer- [] (or @timer* (dosync (alter timer* (fn [_] (HashedWheelTimer.))))))
+(defn- timer [] (or @timer* (dosync (alter timer* (fn [_] (HashedWheelTimer.))))))
 
 (defmacro future-listener [params & body]
   (cond

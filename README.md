@@ -38,37 +38,38 @@ The next important step is to create a connecion. The connection will act as pro
 to the Apple service. You don't need to open, close or maintain it. The underlying connection management
 is handeled by the library and netty.
 
+## Creating a connection
 To create a connection we will need a `ssl-context` and an `address` of the Apple servers. The `address` is the easy part.
 You may need the `dev-address` or the `prod-address` to obtain the addresses used by Apple.
 
-To create the `ssl-context` you may use the functions in `herolabs.apns.ssl`. First create a File or URL to your
-keystore. How you create this, I'll explain later.
+To create the `ssl-context` you may use the functions in `herolabs.apns.ssl`. First create a Files or URLs to your
+certificate and key files. Then you can use the `keystore` function to create a transient keystore containing the key and the certificate.
 
-    (def key-store (clojure.java.io/resource "keys/my-keystore"))
+	(let [key-file (resource "files/my-project.p12")
+	      cert-file (resource "files/my-project.cer")
+	      store (ssl/keystore :key-path key-
+	      					  :key-pass "verysecretkeypass"
+	      					  :cert-path cert-file)]
+		…
+	)
+                                      
 
 Unfortunately the certificates used by Apple are not signed by a major (known by the JRE) authority. So the connection
 would not be established by the JRE. You have to choices: a) import the Apple certificates into the JRE keystores (secure)
 b) override the trust manager so that he accepts the certificate (not so secure). In this example I chose b.
 
-    (def silly-trust-managers (naive-trust-managers :trace true)))
+Now lets have a look how to create the context and connection:
 
-Now we have everything in place to create the SSLContext to user for the connection.
+	(let [silly-trust-managers (naive-trust-managers :trace true)
+		  ctx (ssl/ssl-context :keystore store :trust-managers silly-trust-managers)
+		  connection (push/create-connection (dev-address) ctx)]
+		…
+	)
 
-    (def ctx (ssl-context
-          :store-path keystore
-          :store-pass "averysecretpassword"
-          :cert-pass "anevenbetterpassword"
-          :trust-managers silly-trust-managers)
-
-So let's create the connection:
-
-    (def connection (push/create-connection (dev-address) ctx))
 
 Now lets send a message:
 
     (send-message connection "--the-device-token--" message)
-
-a vóila! The message is sent!
 
 Due to the nature of the protocol the feedback is very "limitied". This means, if an error occurs Apple simply closes
 the underlying connection. So you don't get any feedback if the message will reach the sender, but that is exactly
@@ -87,6 +88,29 @@ Using this service is also pretty simple:
 The `feedback` function returns a lazy collection that reads the data from the service.  The `herolabs.apns.feedback`
 also contain the `dev-address` or the `prod-address` functions to contain the addresses. Be aware that they differ from
 the ones used by the push service.
+
+## Creating a ssl-context using a JKS keystore
+This is the old and less elegant easy way.
+
+To create the `ssl-context` you may use the functions in `herolabs.apns.ssl`. First create a File or URL to your
+keystore. How you create this, I'll explain later.
+
+    (def key-store (clojure.java.io/resource "keys/my-keystore"))
+
+As trust manager just use the same brainded version like in the last example. Now we have everything in place to create the SSLContext to user for the connection.  
+
+    (def ctx (ssl-context
+          :store-path keystore
+          :store-pass "averysecretpassword"
+          :cert-pass "anevenbetterpassword"
+          :trust-managers silly-trust-managers)
+
+So let's create the connection:
+
+    (def connection (push/create-connection (dev-address) ctx))
+
+
+a vóila! The message is sent!
 
 ## Creating a JKS keystore
 

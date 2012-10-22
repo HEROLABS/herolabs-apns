@@ -33,6 +33,10 @@
                                            t (if (not= Thread/NORM_PRIORITY (.getPriority t)) (.setPriority t Thread/NORM_PRIORITY) t)]
                                        t)))))))))
 
+(def ^:private timer* (ref nil))
+
+(defn timer- [] (or @timer* (dosync (alter timer* (fn [_] (HashedWheelTimer.))))))
+
 (defmacro future-listener [params & body]
   (cond
     (not (vector? params)) (throw (IllegalArgumentException. "Parameter have to be a vector."))
@@ -102,9 +106,8 @@
                         boss-executor worker-executor) (ClientBootstrap.))
         ssl-handler-factory (create-ssl-handler-factory engine-factory)
         client-handle (atom nil)
-        timer (HashedWheelTimer.)
         pipeline-factory (create-pipeline-factory ssl-handler-factory (handler bootstrap ssl-handler-factory client-handle
-                                                                        exception-handler) timer time-out)
+                                                                        exception-handler) (timer) time-out)
         bootstrap (doto bootstrap
       (.setOption "connectTimeoutMillis" 5000)
       (.setPipelineFactory pipeline-factory)

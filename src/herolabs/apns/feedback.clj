@@ -34,6 +34,10 @@
                                            t (if (not= Thread/NORM_PRIORITY (.getPriority t)) (.setPriority t Thread/NORM_PRIORITY) t)]
                                        t)))))))))
 
+(def ^:private timer* (ref nil))
+
+(defn- timer [] (or @timer* (dosync (alter timer* (fn [_] (HashedWheelTimer.))))))
+
 
 (defn- handler [^LinkedBlockingQueue queue]
   "Function to create a ChannelUpstreamHandler"
@@ -64,12 +68,11 @@
   (reify
     ChannelPipelineFactory
     (getPipeline [this]
-      (let [timer (HashedWheelTimer.)]
         (doto (Channels/pipeline)
           (.addLast "ssl" (SslHandler. ssl-engine))
           (.addLast "decoder" (feedback-decoder))
-          (.addLast "timeout" (ReadTimeoutHandler. timer (int (if time-out time-out 300))))
-          (.addLast "handler" handler))))))
+          (.addLast "timeout" (ReadTimeoutHandler. (timer) (int (if time-out time-out 300))))
+          (.addLast "handler" handler)))))
 
 (defn- connect [^InetSocketAddress address ^SSLContext ssl-context time-out queue boss-executor worker-executor]
   "creates a netty Channel to connect to the server."

@@ -5,8 +5,7 @@
   (:import [org.apache.commons.codec.digest DigestUtils]
            [java.security Security KeyStore]
            [javax.net.ssl KeyManager KeyManagerFactory SSLContext SSLEngine TrustManager TrustManagerFactory X509TrustManager]
-           [java.security.cert Certificate X509Certificate CertificateException CertificateFactory])
-  )
+           [java.security.cert Certificate X509Certificate CertificateException CertificateFactory]))
 
 
 (defn load-keystore
@@ -25,17 +24,13 @@
            store-type "JCEKS"}}]
   (let [keystore (if keystore keystore (load-keystore store-path store-pass store-type))
         kmf (doto (KeyManagerFactory/getInstance algorithm)
-      (.init keystore (char-array key-pass)))
+              (.init keystore (char-array key-pass)))
         tms (if trust-managers trust-managers (.getTrustManagers (doto
-                                                                   (TrustManagerFactory/getInstance algorithm)
-                                                                   (.init keystore)
-                                                                   )))
+                                                                     (TrustManagerFactory/getInstance algorithm)
+                                                                   (.init keystore))))
         context (doto (SSLContext/getInstance "TLS")
-      (.init (.getKeyManagers kmf) tms nil))
-        ]
-    context
-    )
-  )
+                  (.init (.getKeyManagers kmf) tms nil))]
+    context))
 
 (defn aliases [keystore]
   (letfn [(get-aliases [enum] (lazy-seq
@@ -64,17 +59,14 @@
   (let [engine (.createSSLEngine context)]
     (if use-client-mode
       (doto engine (.setUseClientMode use-client-mode))
-      engine)
-    )
-  )
+      engine)))
 
 (defn ssl-engine-factory [context & {:keys [use-client-mode] :or {use-client-mode true}}]
   "Creates an SSL engine"
   (fn [] (let [engine (.createSSLEngine context)]
-           (if use-client-mode
-             (doto engine (.setUseClientMode use-client-mode))
-             engine)
-           )))
+          (if use-client-mode
+            (doto engine (.setUseClientMode use-client-mode))
+            engine))))
 
 
 
@@ -83,10 +75,6 @@
   (into-array (list (proxy [javax.net.ssl.X509TrustManager] []
                       (getAcceptedIssuers [] (make-array X509Certificate 0))
                       (checkClientTrusted [chain auth-type]
-                        (when trace (info "Unknown client certificate:" (.getSubjectDN (get chain 0))))
-                        )
+                        (when trace (info "Unknown client certificate:" (.getSubjectDN (get chain 0)))))
                       (checkServerTrusted [chain auth-type]
-                        (when trace (info "Unknown server certificate:" (.getSubjectDN (get chain 0))))
-                        )
-                      )))
-  )
+                        (when trace (info "Unknown server certificate:" (.getSubjectDN (get chain 0)))))))))

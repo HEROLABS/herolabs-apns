@@ -14,25 +14,23 @@
            [java.util.concurrent Executors ExecutorService ThreadFactory]
            [java.util.concurrent LinkedBlockingQueue TimeUnit]
            [java.net InetSocketAddress]
-           [javax.net.ssl SSLContext]
-           )
-  )
+           [javax.net.ssl SSLContext]))
 
 
 (def ^:private default-thread-pool* (atom nil))
 
 (defn default-thread-pool []
   (or @default-thread-pool*
-    (swap! default-thread-pool*
-      (fn [_] (Executors/newCachedThreadPool
-                (let [number (atom 1)
-                      sm (System/getSecurityManager)
-                      group (if sm (.getThreadGroup sm) (.getThreadGroup (Thread/currentThread)))]
-                  (reify ThreadFactory
-                    (newThread [_ r] (let [t (Thread. group r (str "apns-feedback-" (swap! number inc)) 0)
-                                           t (if (.isDaemon t) (.setDaemon t false) t)
-                                           t (if (not= Thread/NORM_PRIORITY (.getPriority t)) (.setPriority t Thread/NORM_PRIORITY) t)]
-                                       t)))))))))
+      (swap! default-thread-pool*
+             (fn [_] (Executors/newCachedThreadPool
+                     (let [number (atom 1)
+                           sm (System/getSecurityManager)
+                           group (if sm (.getThreadGroup sm) (.getThreadGroup (Thread/currentThread)))]
+                       (reify ThreadFactory
+                         (newThread [_ r] (let [t (Thread. group r (str "apns-feedback-" (swap! number inc)) 0)
+                                                t (if (.isDaemon t) (.setDaemon t false) t)
+                                                t (if (not= Thread/NORM_PRIORITY (.getPriority t)) (.setPriority t Thread/NORM_PRIORITY) t)]
+                                            t)))))))))
 
 (def ^:private timer* (ref nil))
 
@@ -45,19 +43,17 @@
     (channelConnected [^ChannelHandlerContext ctx ^ChannelStateEvent event]
       (debug "channelConnected")
       (let [ssl-handler (-> ctx
-        (.getPipeline)
-        (.get SslHandler))]
-        (.handshake ssl-handler)
-        ))
+                            (.getPipeline)
+                            (.get SslHandler))]
+        (.handshake ssl-handler)))
     (messageReceived [^ChannelHandlerContext ctx ^MessageEvent event]
       (debug "messageReceived - " (.getMessage event))
       (.put queue (.getMessage event)))
     (exceptionCaught [^ChannelHandlerContext ctx ^ExceptionEvent event]
       (debug (.getCause event) "exceptionCaught")
       (-> event
-        (.getChannel)
-        (.close))
-      )
+          (.getChannel)
+          (.close)))
     (channelClosed [^ChannelHandlerContext ctx ^ChannelStateEvent event]
       (debug "channelClosed"))))
 
@@ -68,11 +64,11 @@
   (reify
     ChannelPipelineFactory
     (getPipeline [this]
-        (doto (Channels/pipeline)
-          (.addLast "ssl" (SslHandler. ssl-engine))
-          (.addLast "decoder" (feedback-decoder))
-          (.addLast "timeout" (ReadTimeoutHandler. (timer) (int (if time-out time-out 300))))
-          (.addLast "handler" handler)))))
+      (doto (Channels/pipeline)
+        (.addLast "ssl" (SslHandler. ssl-engine))
+        (.addLast "decoder" (feedback-decoder))
+        (.addLast "timeout" (ReadTimeoutHandler. (timer) (int (if time-out time-out 300))))
+        (.addLast "handler" handler)))))
 
 (defn- connect [^InetSocketAddress address ^SSLContext ssl-context time-out queue boss-executor worker-executor]
   "creates a netty Channel to connect to the server."
@@ -80,22 +76,18 @@
     (let [engine (ssl-engine ssl-context :use-client-mode true)
           pipeline-factory (create-pipeline-factory engine (handler queue) time-out)
           bootstrap (doto (-> (NioClientSocketChannelFactory. boss-executor worker-executor)
-                            (ClientBootstrap.))
-        (.setOption "connectTimeoutMillis" 5000)
-        (.setPipelineFactory pipeline-factory))
+                              (ClientBootstrap.))
+                      (.setOption "connectTimeoutMillis" 5000)
+                      (.setPipelineFactory pipeline-factory))
           future (.connect bootstrap address)
           channel (-> future
-        (.awaitUninterruptibly)
-        (.getChannel)
-        )]
+                      (.awaitUninterruptibly)
+                      (.getChannel))]
       (if (.isSuccess future)
         channel
         (do
           (.releaseExternalResources bootstrap)
-          nil
-          )
-        )
-      )
+          nil)))
     (catch java.lang.Exception e
       (warn e "Error"))))
 
@@ -103,11 +95,11 @@
 (defn- read-feedback [queue channel]
   "Internal function to create a lazy-seq returning the data from the feedback service"
   (lazy-seq
-    (if-let [next (.poll queue 10 TimeUnit/SECONDS)]
-      (cons next (read-feedback queue channel))
-      (when (.isConnected channel)
-        (.close channel)
-        nil))))
+   (if-let [next (.poll queue 10 TimeUnit/SECONDS)]
+     (cons next (read-feedback queue channel))
+     (when (.isConnected channel)
+       (.close channel)
+       nil))))
 
 (defn feedback [^InetSocketAddress address ^SSLContext ssl-context & {:keys [time-out boss-executor worker-executor]
                                                                       :or {time-out 300

@@ -4,8 +4,7 @@
            [org.jboss.netty.buffer ChannelBuffer ChannelBuffers]
            [java.nio ByteOrder]
            [org.apache.commons.codec.binary Hex]
-           [java.util.concurrent.atomic AtomicInteger]
-           ))
+           [java.util.concurrent.atomic AtomicInteger]))
 
 ;; some constants
 (def ^:private standard-head (byte-array 1 (byte 0)))
@@ -19,8 +18,7 @@
                                   (byte 5) :invalid-token-size
                                   (byte 6) :invalid-topic-size
                                   (byte 7) :invalid-payload-size
-                                  (byte 8) :invalid-token
-                                  })
+                                  (byte 8) :invalid-token})
 
 
 (def ^:dynamic *coercions* json/*coercions*)
@@ -28,14 +26,11 @@
 (defn- serialize [msg]
   "Serializes the map into a JSON representation"
   (binding [json/*coercions* *coercions*]
-    (json/generate-string msg)
-    )
-  )
+    (json/generate-string msg)))
 
 (defn- dynamic-buffer [len]
   "Creates a dynamic buffer."
-  (ChannelBuffers/dynamicBuffer ByteOrder/BIG_ENDIAN len)
-  )
+  (ChannelBuffers/dynamicBuffer ByteOrder/BIG_ENDIAN len))
 
 (defn- encode-message [^String device-token msg]
   "Encodes a message into the standard APNS protocol format
@@ -43,15 +38,12 @@
   (let [token (.decode hex-codec device-token)
         serialized (serialize msg)
         buffer (doto (dynamic-buffer (+ 1 2 (count token) 2 (count serialized)))
-      (.writeBytes standard-head)
-      (.writeShort (int (count token)))
-      (.writeBytes token)
-      (.writeShort (int (count serialized)))
-      (.writeBytes (.getBytes serialized)))
-        ]
-    buffer
-    )
-  )
+                 (.writeBytes standard-head)
+                 (.writeShort (int (count token)))
+                 (.writeBytes token)
+                 (.writeShort (int (count serialized)))
+                 (.writeBytes (.getBytes serialized)))]
+    buffer))
 
 
 
@@ -64,17 +56,14 @@
         expires (get m :expires Integer/MAX_VALUE)
         serialized (serialize msg)
         buffer (doto (dynamic-buffer (+ 1 4 4 2 (count token) 2 (count serialized)))
-      (.writeBytes enhanced-head)
-      (.writeInt id)
-      (.writeInt (int expires))
-      (.writeShort (int (count token)))
-      (.writeBytes token)
-      (.writeShort (int (count serialized)))
-      (.writeBytes (.getBytes serialized)))
-        ]
-    buffer
-    )
-  )
+                 (.writeBytes enhanced-head)
+                 (.writeInt id)
+                 (.writeInt (int expires))
+                 (.writeShort (int (count token)))
+                 (.writeBytes token)
+                 (.writeShort (int (count serialized)))
+                 (.writeBytes (.getBytes serialized)))]
+    buffer))
 
 
 
@@ -87,14 +76,8 @@
         (if-let [device-token (get (meta msg) :device-token )]
           (if (= :enhanced (get (meta msg) :format ))
             (encode-enhanced-message id-gen device-token msg)
-            (encode-message device-token msg)
-            )
-          (throw (IllegalArgumentException. "Message must contain a :device-token as meta."))
-          )
-        )
-      )
-    )
-  )
+            (encode-message device-token msg))
+          (throw (IllegalArgumentException. "Message must contain a :device-token as meta.")))))))
 
 
 (defn decoder []
@@ -104,11 +87,7 @@
       (let [command (.readByte msg)
             status (.readByte msg)
             id (.readInt msg)]
-        {:status (get status-dictionary status :unknown ) :id id}
-        )
-      )
-    )
-  )
+        {:status (get status-dictionary status :unknown ) :id id}))))
 
 (defn feedback-decoder []
   "Creates an decoder for the APNS protocol."
@@ -119,8 +98,4 @@
             token-bytes (byte-array token-len)]
         (.readBytes msg token-bytes)
         (let [token (Hex/encodeHexString token-bytes)]
-          [token time]
-          ))
-      )
-    )
-  )
+          [token time])))))

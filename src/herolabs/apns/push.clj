@@ -22,16 +22,16 @@
 
 (defn default-thread-pool []
   (or @default-thread-pool*
-    (swap! default-thread-pool*
-      (fn [_] (Executors/newCachedThreadPool
-                (let [number (atom 1)
-                      sm (System/getSecurityManager)
-                      group (if sm (.getThreadGroup sm) (.getThreadGroup (Thread/currentThread)))]
-                  (reify ThreadFactory
-                    (newThread [_ r] (let [t (Thread. group r (str "apns-push-pool-" (swap! number inc)) 0)]
-                                       (when (.isDaemon t) (.setDaemon t false))
-                                       (when (not= Thread/NORM_PRIORITY (.getPriority t)) (.setPriority t Thread/NORM_PRIORITY))
-                                       t)))))))))
+      (swap! default-thread-pool*
+             (fn [_] (Executors/newCachedThreadPool
+                     (let [number (atom 1)
+                           sm (System/getSecurityManager)
+                           group (if sm (.getThreadGroup sm) (.getThreadGroup (Thread/currentThread)))]
+                       (reify ThreadFactory
+                         (newThread [_ r] (let [t (Thread. group r (str "apns-push-pool-" (swap! number inc)) 0)]
+                                            (when (.isDaemon t) (.setDaemon t false))
+                                            (when (not= Thread/NORM_PRIORITY (.getPriority t)) (.setPriority t Thread/NORM_PRIORITY))
+                                            t)))))))))
 
 (def ^:private timer* (ref nil))
 
@@ -39,12 +39,12 @@
 
 (defmacro future-listener [params & body]
   (cond
-    (not (vector? params)) (throw (IllegalArgumentException. "Parameter have to be a vector."))
-    (not= 1 (count params)) (throw (IllegalArgumentException. "Parameter may only contain one element."))
-    (empty? body) nil
-    :else (let [future (first params)]
-            `(reify org.jboss.netty.channel.ChannelFutureListener
-               (operationComplete [this# ^ChannelFuture ~future] ~@body)))))
+   (not (vector? params)) (throw (IllegalArgumentException. "Parameter have to be a vector."))
+   (not= 1 (count params)) (throw (IllegalArgumentException. "Parameter may only contain one element."))
+   (empty? body) nil
+   :else (let [future (first params)]
+           `(reify org.jboss.netty.channel.ChannelFutureListener
+              (operationComplete [this# ^ChannelFuture ~future] ~@body)))))
 
 (defn- handler
   "Function to create a ChannelUpstreamHandler"
@@ -53,29 +53,26 @@
     (channelConnected [^ChannelHandlerContext ctx ^ChannelStateEvent event]
       (trace "channelConnected")
       (let [ssl-handler (-> ctx
-        (.getPipeline)
-        (.get SslHandler))]
-        (.handshake ssl-handler)
-        ))
+                            (.getPipeline)
+                            (.get SslHandler))]
+        (.handshake ssl-handler)))
     (channelDisconnected [^ChannelHandlerContext ctx ^ChannelStateEvent event]
       (trace "channelDisconnected" this))
     (messageReceived [^ChannelHandlerContext ctx ^MessageEvent event]
-      (trace "messageReceived -" (.getMessage event))
-      )
+      (trace "messageReceived -" (.getMessage event)))
     (exceptionCaught [^ChannelHandlerContext ctx ^ExceptionEvent event]
       (trace (.getCause event) "exceptionCaught")
       (when exception-handler (exception-handler (.getCause event)))
       (-> event
-        (.getChannel)
-        (.close))
-      )
+          (.getChannel)
+          (.close)))
     (channelClosed [^ChannelHandlerContext ctx ^ChannelStateEvent event]
       (trace "channelClosed")
       (let [new-handler (ssl-handler-factory)
             pipeline (.getPipeline ctx)
             ssl-handler (.replace pipeline SslHandler "ssl" new-handler)]
         (-> (.connect bootstrap) (.addListener (future-listener [f]
-                                                 (swap! client-handle (fn [_] (.getChannel f))))))))))
+                                                                (swap! client-handle (fn [_] (.getChannel f))))))))))
 
 
 (defn- create-ssl-handler-factory [ssl-engine-factory] (fn [] (SslHandler. (ssl-engine-factory))))
@@ -99,18 +96,17 @@
   "Creates a Netty Channel to connect to the server."
   (let [engine-factory (ssl-engine-factory ssl-context :use-client-mode true)
         bootstrap (-> (NioClientSocketChannelFactory.
-                        boss-executor worker-executor) (ClientBootstrap.))
+                       boss-executor worker-executor) (ClientBootstrap.))
         ssl-handler-factory (create-ssl-handler-factory engine-factory)
         client-handle (atom nil)
         pipeline-factory (create-pipeline-factory ssl-handler-factory (handler bootstrap ssl-handler-factory client-handle
-                                                                        exception-handler) (timer) time-out)
+                                                                               exception-handler) (timer) time-out)
         bootstrap (doto bootstrap
-      (.setOption "connectTimeoutMillis" 5000)
-      (.setPipelineFactory pipeline-factory)
-      (.setOption "remoteAddress" address))
+                    (.setOption "connectTimeoutMillis" 5000)
+                    (.setPipelineFactory pipeline-factory)
+                    (.setOption "remoteAddress" address))
         future (.connect bootstrap)
-        channel (-> future (.awaitUninterruptibly) (.getChannel))
-        ]
+        channel (-> future (.awaitUninterruptibly) (.getChannel))]
     (if (.isSuccess future)
       (do
         (swap! client-handle (fn [_] channel))

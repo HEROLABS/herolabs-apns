@@ -34,6 +34,7 @@
                                        (when (not= Thread/NORM_PRIORITY (.getPriority t)) (.setPriority t Thread/NORM_PRIORITY))
                                        t)))))))))
 
+
 (def ^:private timer* (ref nil))
 
 (defn- timer [] (or @timer* (dosync (alter timer* (fn [_] (HashedWheelTimer.))))))
@@ -54,22 +55,20 @@
     (channelConnected [^ChannelHandlerContext ctx ^ChannelStateEvent event]
       (trace "channelConnected")
       (let [^SslHandler ssl-handler (-> ctx
-                          (.getPipeline)
-                          (.get SslHandler))]
+                                      (.getPipeline)
+                                      (.get SslHandler))]
         (.handshake ssl-handler)
         ))
     (channelDisconnected [^ChannelHandlerContext ctx ^ChannelStateEvent event]
       (trace "channelDisconnected" this))
     (messageReceived [^ChannelHandlerContext ctx ^MessageEvent event]
-      (trace "messageReceived -" (.getMessage event))
-      )
+      (trace "messageReceived -" (.getMessage event)))
     (exceptionCaught [^ChannelHandlerContext ctx ^ExceptionEvent event]
       (trace (.getCause event) "exceptionCaught")
       (when exception-handler (exception-handler (.getCause event)))
       (-> event
         (.getChannel)
-        (.close))
-      )
+        (.close)))
     (channelClosed [^ChannelHandlerContext ctx ^ChannelStateEvent event]
       (trace "channelClosed")
       (let [^SslHandler new-handler (ssl-handler-factory)
@@ -110,8 +109,7 @@
                     (.setPipelineFactory pipeline-factory)
                     (.setOption "remoteAddress" address))
         future (.connect bootstrap)
-        channel (-> future (.awaitUninterruptibly) (.getChannel))
-        ]
+        channel (-> future (.awaitUninterruptibly) (.getChannel))]
     (if (.isSuccess future)
       (do
         (swap! client-handle (fn [_] channel))

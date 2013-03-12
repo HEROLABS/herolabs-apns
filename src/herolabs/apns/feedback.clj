@@ -14,9 +14,7 @@
            [java.util.concurrent Executors ExecutorService ThreadFactory]
            [java.util.concurrent LinkedBlockingQueue TimeUnit]
            [java.net InetSocketAddress]
-           [javax.net.ssl SSLContext]
-           )
-  )
+           [javax.net.ssl SSLContext]))
 
 
 (def ^:private default-thread-pool* (atom nil))
@@ -46,8 +44,8 @@
     (channelConnected [^ChannelHandlerContext ctx ^ChannelStateEvent event]
       (debug "channelConnected")
       (let [^SslHandler ssl-handler (-> ctx
-                          (.getPipeline)
-                          (.get SslHandler))]
+                                      (.getPipeline)
+                                      (.get SslHandler))]
         (.handshake ssl-handler)
         ))
     (messageReceived [^ChannelHandlerContext ctx ^MessageEvent event]
@@ -57,8 +55,7 @@
       (debug (.getCause event) "exceptionCaught")
       (-> event
         (.getChannel)
-        (.close))
-      )
+        (.close)))
     (channelClosed [^ChannelHandlerContext ctx ^ChannelStateEvent event]
       (debug "channelClosed"))))
 
@@ -93,10 +90,7 @@
         channel
         (do
           (.releaseExternalResources bootstrap)
-          nil
-          )
-        )
-      )
+          nil)))
     (catch java.lang.Exception e
       (warn e "Error"))))
 

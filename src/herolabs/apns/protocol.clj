@@ -4,8 +4,7 @@
            [org.jboss.netty.buffer ChannelBuffer ChannelBuffers]
            [java.nio ByteOrder]
            [org.apache.commons.codec.binary Hex]
-           [java.util.concurrent.atomic AtomicInteger]
-           ))
+           [java.util.concurrent.atomic AtomicInteger]))
 
 ;; some constants
 (def ^{:private true :tag 'bytes} standard-head (byte-array 1 (byte 0)))
@@ -19,8 +18,7 @@
                                   (byte 5) :invalid-token-size
                                   (byte 6) :invalid-topic-size
                                   (byte 7) :invalid-payload-size
-                                  (byte 8) :invalid-token
-                                  })
+                                  (byte 8) :invalid-token})
 
 
 (def ^:dynamic *coercions* json/*coercions*)
@@ -67,7 +65,6 @@
       (.writeShort (int (count serialized)))
       (.writeBytes (.getBytes serialized))))
   )
-
 
 
 (defn encoder [^AtomicInteger id-gen]

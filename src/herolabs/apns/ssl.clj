@@ -5,8 +5,7 @@
   (:import [org.apache.commons.codec.digest DigestUtils]
            [java.security Security KeyStore]
            [javax.net.ssl KeyManager KeyManagerFactory SSLContext SSLEngine TrustManager TrustManagerFactory X509TrustManager]
-           [java.security.cert Certificate X509Certificate CertificateException CertificateFactory])
-  )
+           [java.security.cert Certificate X509Certificate CertificateException CertificateFactory]))
 
 
 (defn load-keystore
@@ -25,17 +24,14 @@
            store-type "JCEKS"}}]
   (let [keystore (if keystore keystore (load-keystore store-path store-pass store-type))
         kmf (doto (KeyManagerFactory/getInstance algorithm)
-      (.init keystore (char-array key-pass)))
+              (.init keystore (char-array key-pass)))
         tms (if trust-managers trust-managers (.getTrustManagers (doto
                                                                    (TrustManagerFactory/getInstance algorithm)
                                                                    (.init ^KeyStore keystore)
                                                                    )))
         context (doto (SSLContext/getInstance "TLS")
-      (.init (.getKeyManagers kmf) tms nil))
-        ]
-    context
-    )
-  )
+                  (.init (.getKeyManagers kmf) tms nil))]
+    context))
 
 (defn aliases [^KeyStore keystore]
   (letfn [(get-aliases [^java.util.Enumeration enum] (lazy-seq
@@ -64,18 +60,14 @@
   (let [^SSLEngine engine (.createSSLEngine context)]
     (if use-client-mode
       (doto engine (.setUseClientMode use-client-mode))
-      engine)
-    )
-  )
+      engine)))
 
 (defn ssl-engine-factory [^SSLContext context & {:keys [use-client-mode] :or {use-client-mode true}}]
   "Creates an SSL engine"
   (fn [] (let [engine (.createSSLEngine context)]
-           (if use-client-mode
-             (doto engine (.setUseClientMode use-client-mode))
-             engine)
-           )))
-
+          (if use-client-mode
+            (doto engine (.setUseClientMode use-client-mode))
+            engine))))
 
 
 (defn naive-trust-managers [& {:keys [trace] :or [trace false]}]

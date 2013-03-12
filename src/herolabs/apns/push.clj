@@ -93,7 +93,7 @@
           (.addLast "timeout" (WriteTimeoutHandler. timer (int (if time-out time-out 300))))
           (.addLast "protocoll-handler" protocoll-handler))))))
 
-(defn- default-exception-handler [cause] (info cause "An exception occured while sending push notification to the server."))
+(defn- default-exception-handler [cause] (warn cause "An exception occured while sending push notification to the server."))
 
 (defn- connect [^InetSocketAddress address ^SSLContext ssl-context time-out boss-executor worker-executor exception-handler]
   "Creates a Netty Channel to connect to the server."

@@ -8,9 +8,9 @@
            ))
 
 ;; some constants
-(def ^:private standard-head (byte-array 1 (byte 0)))
-(def ^:private enhanced-head (byte-array 1 (byte 1)))
-(def ^{:private true} hex-codec (Hex.))
+(def ^{:private true :tag 'bytes} standard-head (byte-array 1 (byte 0)))
+(def ^{:private true :tag 'bytes} enhanced-head (byte-array 1 (byte 1)))
+(def ^{:private true :tag 'Hex} hex-codec (Hex.))
 (def ^:private status-dictionary {(byte 0) :ok
                                   (byte 1) :processing-error
                                   (byte 2) :missing-device-token
@@ -28,52 +28,44 @@
 (defn- serialize [msg]
   "Serializes the map into a JSON representation"
   (binding [json/*coercions* *coercions*]
-    (json/generate-string msg)
-    )
-  )
+    (json/generate-string msg)))
 
-(defn- dynamic-buffer [len]
+(defn- dynamic-buffer [^long len]
   "Creates a dynamic buffer."
-  (ChannelBuffers/dynamicBuffer ByteOrder/BIG_ENDIAN len)
-  )
+  (ChannelBuffers/dynamicBuffer ^ByteOrder ByteOrder/BIG_ENDIAN (int len)))
 
 (defn- encode-message [^String device-token msg]
   "Encodes a message into the standard APNS protocol format
   http://developer.apple.com/library/mac/#documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/CommunicatingWIthAPS/CommunicatingWIthAPS.html"
-  (let [token (.decode hex-codec device-token)
-        serialized (serialize msg)
-        buffer (doto (dynamic-buffer (+ 1 2 (count token) 2 (count serialized)))
-      (.writeBytes standard-head)
+  (let [^bytes token (.decode hex-codec device-token)
+        ^String serialized (serialize msg)
+        ^ChannelBuffer buffer (dynamic-buffer (+ 1 2 (count token) 2 (count serialized)))]
+    (doto buffer
+      (.writeBytes ^bytes standard-head)
       (.writeShort (int (count token)))
       (.writeBytes token)
       (.writeShort (int (count serialized)))
-      (.writeBytes (.getBytes serialized)))
-        ]
-    buffer
-    )
-  )
+      (.writeBytes (.getBytes serialized)))))
 
 
 
 (defn encode-enhanced-message [^AtomicInteger id-gen ^String device-token msg]
   "Encodes a message into the enhanced APNS protocol format
   http://developer.apple.com/library/mac/#documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/CommunicatingWIthAPS/CommunicatingWIthAPS.html"
-  (let [token (.decode hex-codec device-token)
+  (let [^bytes token (.decode hex-codec device-token)
         m (meta msg)
         id (.getAndIncrement id-gen)
-        expires (get m :expires Integer/MAX_VALUE)
-        serialized (serialize msg)
-        buffer (doto (dynamic-buffer (+ 1 4 4 2 (count token) 2 (count serialized)))
+        expires (or (get m :expires) Integer/MAX_VALUE)
+        ^String serialized (serialize msg)
+        ^ChannelBuffer buffer (dynamic-buffer (+ 1 4 4 2 (count token) 2 (count serialized)))]
+    (doto buffer
       (.writeBytes enhanced-head)
       (.writeInt id)
       (.writeInt (int expires))
       (.writeShort (int (count token)))
       (.writeBytes token)
       (.writeShort (int (count serialized)))
-      (.writeBytes (.getBytes serialized)))
-        ]
-    buffer
-    )
+      (.writeBytes (.getBytes serialized))))
   )
 
 
@@ -87,40 +79,26 @@
         (if-let [device-token (get (meta msg) :device-token )]
           (if (= :enhanced (get (meta msg) :format ))
             (encode-enhanced-message id-gen device-token msg)
-            (encode-message device-token msg)
-            )
-          (throw (IllegalArgumentException. "Message must contain a :device-token as meta."))
-          )
-        )
-      )
-    )
-  )
+            (encode-message device-token msg))
+          (throw (IllegalArgumentException. "Message must contain a :device-token as meta.")))))))
 
 
 (defn decoder []
   "Creates an decoder for the APNS protocol."
   (proxy [org.jboss.netty.handler.codec.oneone.OneToOneDecoder] []
-    (decode [^ChannelHandlerContext ctx ^Channel channel msg]
+    (decode [^ChannelHandlerContext ctx ^Channel channel ^ChannelBuffer msg]
       (let [command (.readByte msg)
             status (.readByte msg)
             id (.readInt msg)]
-        {:status (get status-dictionary status :unknown ) :id id}
-        )
-      )
-    )
-  )
+        {:status (get status-dictionary status :unknown ) :id id}))))
 
 (defn feedback-decoder []
   "Creates an decoder for the APNS protocol."
   (proxy [org.jboss.netty.handler.codec.oneone.OneToOneDecoder] []
-    (decode [^ChannelHandlerContext ctx ^Channel channel msg]
+    (decode [^ChannelHandlerContext ctx ^Channel channel ^ChannelBuffer msg]
       (let [time (* (.readInt msg) 1000)
             token-len (.readShort msg)
             token-bytes (byte-array token-len)]
         (.readBytes msg token-bytes)
         (let [token (Hex/encodeHexString token-bytes)]
-          [token time]
-          ))
-      )
-    )
-  )
+          [token time])))))

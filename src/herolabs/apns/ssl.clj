@@ -28,7 +28,7 @@
       (.init keystore (char-array key-pass)))
         tms (if trust-managers trust-managers (.getTrustManagers (doto
                                                                    (TrustManagerFactory/getInstance algorithm)
-                                                                   (.init keystore)
+                                                                   (.init ^KeyStore keystore)
                                                                    )))
         context (doto (SSLContext/getInstance "TLS")
       (.init (.getKeyManagers kmf) tms nil))
@@ -37,8 +37,8 @@
     )
   )
 
-(defn aliases [keystore]
-  (letfn [(get-aliases [enum] (lazy-seq
+(defn aliases [^KeyStore keystore]
+  (letfn [(get-aliases [^java.util.Enumeration enum] (lazy-seq
                                 (when (.hasMoreElements enum)
                                   (cons (.nextElement enum) (get-aliases enum)))))]
     (get-aliases (.aliases keystore))))
@@ -51,7 +51,7 @@
 
 (defn keystore [& {:keys [key-path key-pass key-type cert-path cert-type] :or {key-type "PKCS12" cert-type "X.509"}}]
   (let [key-store (load-keystore key-path key-pass key-type)
-        key (.getKey key-store (first (aliases key-store)) (char-array key-pass))
+        key (.getKey ^java.security.KeyStore key-store (first (aliases key-store)) (char-array key-pass))
         certs (get-cert-chain cert-path cert-type)]
     (doto
       (KeyStore/getInstance "JKS")
@@ -59,16 +59,16 @@
       (.setKeyEntry "apple-push-service" key (char-array nil) certs))))
 
 
-(defn ssl-engine [context & {:keys [use-client-mode] :or {use-client-mode true}}]
+(defn ssl-engine [^SSLContext context & {:keys [use-client-mode] :or {use-client-mode true}}]
   "Creates an SSL engine"
-  (let [engine (.createSSLEngine context)]
+  (let [^SSLEngine engine (.createSSLEngine context)]
     (if use-client-mode
       (doto engine (.setUseClientMode use-client-mode))
       engine)
     )
   )
 
-(defn ssl-engine-factory [context & {:keys [use-client-mode] :or {use-client-mode true}}]
+(defn ssl-engine-factory [^SSLContext context & {:keys [use-client-mode] :or {use-client-mode true}}]
   "Creates an SSL engine"
   (fn [] (let [engine (.createSSLEngine context)]
            (if use-client-mode
@@ -82,11 +82,9 @@
   "Creates a very naive trust manager that will accept all certificates."
   (into-array (list (proxy [javax.net.ssl.X509TrustManager] []
                       (getAcceptedIssuers [] (make-array X509Certificate 0))
-                      (checkClientTrusted [chain auth-type]
-                        (when trace (info "Unknown client certificate:" (.getSubjectDN (get chain 0))))
-                        )
-                      (checkServerTrusted [chain auth-type]
-                        (when trace (info "Unknown server certificate:" (.getSubjectDN (get chain 0))))
-                        )
-                      )))
-  )
+                      (checkClientTrusted [ chain auth-type]
+                        (when trace
+                          (info "Unknown client certificate:" (.getSubjectDN ^X509Certificate (get chain 0)))))
+                      (checkServerTrusted [ chain auth-type]
+                        (when trace
+                          (info "Unknown server certificate:" (.getSubjectDN ^X509Certificate (get chain 0)))))))))

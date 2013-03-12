@@ -28,7 +28,8 @@
                       sm (System/getSecurityManager)
                       group (if sm (.getThreadGroup sm) (.getThreadGroup (Thread/currentThread)))]
                   (reify ThreadFactory
-                    (newThread [_ r] (let [t (Thread. group r (str "apns-push-pool-" (swap! number inc)) 0)]
+                    (newThread [_ r] (let [name (str "apns-push-pool-" (swap! number inc))
+                                           ^Thread t (Thread. group r name 0)]
                                        (when (.isDaemon t) (.setDaemon t false))
                                        (when (not= Thread/NORM_PRIORITY (.getPriority t)) (.setPriority t Thread/NORM_PRIORITY))
                                        t)))))))))
@@ -48,13 +49,13 @@
 
 (defn- handler
   "Function to create a ChannelUpstreamHandler"
-  [bootstrap ssl-handler-factory client-handle exception-handler]
+  [^ClientBootstrap bootstrap ssl-handler-factory client-handle exception-handler]
   (proxy [org.jboss.netty.channel.SimpleChannelUpstreamHandler] []
     (channelConnected [^ChannelHandlerContext ctx ^ChannelStateEvent event]
       (trace "channelConnected")
-      (let [ssl-handler (-> ctx
-        (.getPipeline)
-        (.get SslHandler))]
+      (let [^SslHandler ssl-handler (-> ctx
+                          (.getPipeline)
+                          (.get SslHandler))]
         (.handshake ssl-handler)
         ))
     (channelDisconnected [^ChannelHandlerContext ctx ^ChannelStateEvent event]
@@ -71,9 +72,9 @@
       )
     (channelClosed [^ChannelHandlerContext ctx ^ChannelStateEvent event]
       (trace "channelClosed")
-      (let [new-handler (ssl-handler-factory)
-            pipeline (.getPipeline ctx)
-            ssl-handler (.replace pipeline SslHandler "ssl" new-handler)]
+      (let [^SslHandler new-handler (ssl-handler-factory)
+            ^ChannelPipeline pipeline (.getPipeline ctx)
+            ^SslHandler ssl-handler (.replace pipeline SslHandler "ssl" new-handler)]
         (-> (.connect bootstrap) (.addListener (future-listener [f]
                                                  (swap! client-handle (fn [_] (.getChannel f))))))))))
 
@@ -105,9 +106,9 @@
         pipeline-factory (create-pipeline-factory ssl-handler-factory (handler bootstrap ssl-handler-factory client-handle
                                                                         exception-handler) (timer) time-out)
         bootstrap (doto bootstrap
-      (.setOption "connectTimeoutMillis" 5000)
-      (.setPipelineFactory pipeline-factory)
-      (.setOption "remoteAddress" address))
+                    (.setOption "connectTimeoutMillis" 5000)
+                    (.setPipelineFactory pipeline-factory)
+                    (.setOption "remoteAddress" address))
         future (.connect bootstrap)
         channel (-> future (.awaitUninterruptibly) (.getChannel))
         ]
@@ -146,16 +147,16 @@
   (let [client-handle (connect address ssl-context time-out boss-executor worker-executor exception-handler)]
     (when client-handle
       (reify Connection
-        (is-connected? [_] (when-let [channel @client-handle] (.isConnected channel)))
-        (disconnect [_] (when-let [channel @client-handle] (.close channel)))
-        (write-message [_ message] (when-let [channel @client-handle] (.write channel message)))))))
+        (is-connected? [_] (when-let [^Channel channel @client-handle] (.isConnected channel)))
+        (disconnect [_] (when-let [^Channel channel @client-handle] (.close channel)))
+        (write-message [_ message] (when-let [^Channel channel @client-handle] (.write channel message)))))))
 
 (defn send-message
   "Sends a message in the standard message format to the Apple push service"
   [^herolabs.apns.push.Connection connection ^String device-token message & {:keys [completed-listener]}]
   (when (and connection device-token message)
     (loop [[listener & rest] (if (sequential? completed-listener) completed-listener [completed-listener])
-           future (.write-message connection (with-meta message {:device-token device-token}))]
+           ^ChannelFuture future (.write-message connection (with-meta message {:device-token device-token}))]
       (if listener (recur rest (doto future (.addListener listener))) future))))
 
 (defn send-enhanced-message

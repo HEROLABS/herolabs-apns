@@ -29,9 +29,10 @@
                       sm (System/getSecurityManager)
                       group (if sm (.getThreadGroup sm) (.getThreadGroup (Thread/currentThread)))]
                   (reify ThreadFactory
-                    (newThread [_ r] (let [t (Thread. group r (str "apns-feedback-" (swap! number inc)) 0)
-                                           t (if (.isDaemon t) (.setDaemon t false) t)
-                                           t (if (not= Thread/NORM_PRIORITY (.getPriority t)) (.setPriority t Thread/NORM_PRIORITY) t)]
+                    (newThread [_ r] (let [name (str "apns-feedback-pool-" (swap! number inc))
+                                           ^Thread t (Thread. group r name 0)]
+                                       (when (.isDaemon t) (.setDaemon t false))
+                                       (when (not= Thread/NORM_PRIORITY (.getPriority t)) (.setPriority t Thread/NORM_PRIORITY))
                                        t)))))))))
 
 (def ^:private timer* (ref nil))
@@ -44,9 +45,9 @@
   (proxy [org.jboss.netty.channel.SimpleChannelUpstreamHandler] []
     (channelConnected [^ChannelHandlerContext ctx ^ChannelStateEvent event]
       (debug "channelConnected")
-      (let [ssl-handler (-> ctx
-        (.getPipeline)
-        (.get SslHandler))]
+      (let [^SslHandler ssl-handler (-> ctx
+                          (.getPipeline)
+                          (.get SslHandler))]
         (.handshake ssl-handler)
         ))
     (messageReceived [^ChannelHandlerContext ctx ^MessageEvent event]
@@ -68,11 +69,11 @@
   (reify
     ChannelPipelineFactory
     (getPipeline [this]
-        (doto (Channels/pipeline)
-          (.addLast "ssl" (SslHandler. ssl-engine))
-          (.addLast "decoder" (feedback-decoder))
-          (.addLast "timeout" (ReadTimeoutHandler. (timer) (int (if time-out time-out 300))))
-          (.addLast "handler" handler)))))
+      (doto (Channels/pipeline)
+        (.addLast "ssl" (SslHandler. ssl-engine))
+        (.addLast "decoder" (feedback-decoder))
+        (.addLast "timeout" (ReadTimeoutHandler. (timer) (int (if time-out time-out 300))))
+        (.addLast "handler" handler)))))
 
 (defn- connect [^InetSocketAddress address ^SSLContext ssl-context time-out queue boss-executor worker-executor]
   "creates a netty Channel to connect to the server."
@@ -81,13 +82,13 @@
           pipeline-factory (create-pipeline-factory engine (handler queue) time-out)
           bootstrap (doto (-> (NioClientSocketChannelFactory. boss-executor worker-executor)
                             (ClientBootstrap.))
-        (.setOption "connectTimeoutMillis" 5000)
-        (.setPipelineFactory pipeline-factory))
+                      (.setOption "connectTimeoutMillis" 5000)
+                      (.setPipelineFactory pipeline-factory))
           future (.connect bootstrap address)
           channel (-> future
-        (.awaitUninterruptibly)
-        (.getChannel)
-        )]
+                    (.awaitUninterruptibly)
+                    (.getChannel)
+                    )]
       (if (.isSuccess future)
         channel
         (do
@@ -100,7 +101,7 @@
       (warn e "Error"))))
 
 
-(defn- read-feedback [queue channel]
+(defn- read-feedback [^LinkedBlockingQueue queue ^Channel channel]
   "Internal function to create a lazy-seq returning the data from the feedback service"
   (lazy-seq
     (if-let [next (.poll queue 10 TimeUnit/SECONDS)]

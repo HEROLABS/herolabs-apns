@@ -1,4 +1,4 @@
-(defproject herolabs/apns "0.2.0"
+(defproject herolabs/apns "0.2.1"
   :description "A simple lightweight library to use with the Apple push notification service."
   :url "https://github.com/HEROLABS/herolabs-apns"
   :license {:name "Eclipse Public License - v 1.0"

@@ -53,27 +53,30 @@
   [^ClientBootstrap bootstrap ssl-handler-factory client-handle exception-handler]
   (proxy [org.jboss.netty.channel.SimpleChannelUpstreamHandler] []
     (channelConnected [^ChannelHandlerContext ctx ^ChannelStateEvent event]
-      (trace "channelConnected")
-      (let [^SslHandler ssl-handler (-> ctx
+      (let [^Channel channel (.getChannel ctx)
+            ^SslHandler ssl-handler (-> ctx
                                       (.getPipeline)
                                       (.get SslHandler))]
         (.handshake ssl-handler)
-        ))
+        (debug "Channel connected to" (if channel (.getRemoteAddress channel) "-") ".")))
     (channelDisconnected [^ChannelHandlerContext ctx ^ChannelStateEvent event]
-      (trace "channelDisconnected" this))
+      (let [^Channel channel (.getChannel ctx)]
+        (debug "Channel disconnected from" (if channel (.getRemoteAddress channel) "-") ".")))
     (messageReceived [^ChannelHandlerContext ctx ^MessageEvent event]
       (trace "messageReceived -" (.getMessage event)))
     (exceptionCaught [^ChannelHandlerContext ctx ^ExceptionEvent event]
-      (trace (.getCause event) "exceptionCaught")
-      (when exception-handler (exception-handler (.getCause event)))
-      (-> event
-        (.getChannel)
-        (.close)))
+      (let [^Channel channel (.getChannel ctx)]
+        (debug (.getCause event) "An exception occured on channel to" (if channel (.getRemoteAddress channel) "-") ", reopening channel...")
+        (when exception-handler (exception-handler (.getCause event)))
+        (-> event
+          (.getChannel)
+          (.close))))
     (channelClosed [^ChannelHandlerContext ctx ^ChannelStateEvent event]
-      (trace "channelClosed")
-      (let [^SslHandler new-handler (ssl-handler-factory)
+      (let [^Channel channel (.getChannel ctx)
+            ^SslHandler new-handler (ssl-handler-factory)
             ^ChannelPipeline pipeline (.getPipeline ctx)
             ^SslHandler ssl-handler (.replace pipeline SslHandler "ssl" new-handler)]
+        (debug "Channel to" (if channel (.getRemoteAddress channel) "-") "was closed. Reopening it ...")
         (-> (.connect bootstrap) (.addListener (future-listener [f]
                                                  (swap! client-handle (fn [_] (.getChannel f))))))))))
 

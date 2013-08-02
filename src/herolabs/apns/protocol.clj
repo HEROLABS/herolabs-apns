@@ -37,13 +37,14 @@
   http://developer.apple.com/library/mac/#documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/CommunicatingWIthAPS/CommunicatingWIthAPS.html"
   (let [^bytes token (.decode hex-codec device-token)
         ^String serialized (serialize msg)
-        ^ChannelBuffer buffer (dynamic-buffer (+ 1 2 (count token) 2 (count serialized)))]
+        bytes (.getBytes serialized)
+        ^ChannelBuffer buffer (dynamic-buffer (+ 1 2 (count token) 2 (count bytes)))]
     (doto buffer
       (.writeBytes ^bytes standard-head)
       (.writeShort (int (count token)))
       (.writeBytes token)
-      (.writeShort (int (count serialized)))
-      (.writeBytes (.getBytes serialized)))))
+      (.writeShort (int (count bytes)))
+      (.writeBytes bytes))))
 
 
 
@@ -55,15 +56,16 @@
         id (.getAndIncrement id-gen)
         expires (or (get m :expires) Integer/MAX_VALUE)
         ^String serialized (serialize msg)
-        ^ChannelBuffer buffer (dynamic-buffer (+ 1 4 4 2 (count token) 2 (count serialized)))]
+        bytes (.getBytes serialized)
+        ^ChannelBuffer buffer (dynamic-buffer (+ 1 4 4 2 (count token) 2 (count bytes)))]
     (doto buffer
       (.writeBytes enhanced-head)
       (.writeInt id)
       (.writeInt (int expires))
       (.writeShort (int (count token)))
       (.writeBytes token)
-      (.writeShort (int (count serialized)))
-      (.writeBytes (.getBytes serialized))))
+      (.writeShort (int (count bytes)))
+      (.writeBytes bytes)))
   )
 
 

@@ -48,9 +48,24 @@
             `(reify org.jboss.netty.channel.ChannelFutureListener
                (operationComplete [this# ^ChannelFuture ~future] ~@body)))))
 
+(defn logging-close-handler [_ _ _]
+  (fn [^ChannelHandlerContext ctx ^ChannelStateEvent event]
+    (let [^Channel channel (.getChannel ctx)]
+      (debug "Channel to" (if channel (.getRemoteAddress channel) "-") "was closed."))))
+
+(defn reopening-close-handler [^ClientBootstrap bootstrap ssl-handler-factory client-handle]
+  (fn reopening-channel-closed-handler [^ChannelHandlerContext ctx ^ChannelStateEvent event]
+    (let [^Channel channel (.getChannel ctx)
+          ^SslHandler new-handler (ssl-handler-factory)
+          ^ChannelPipeline pipeline (.getPipeline ctx)
+          ^SslHandler ssl-handler (.replace pipeline SslHandler "ssl" new-handler)]
+      (debug "Channel to" (if channel (.getRemoteAddress channel) "-") "was closed. Reopening it ...")
+      (-> (.connect bootstrap) (.addListener (future-listener [f]
+                                               (swap! client-handle (fn [_] (.getChannel f)))))))))
+
 (defn- handler
   "Function to create a ChannelUpstreamHandler"
-  [^ClientBootstrap bootstrap ssl-handler-factory client-handle exception-handler]
+  [^ClientBootstrap bootstrap ssl-handler-factory client-handle exception-handler close-handler]
   (proxy [org.jboss.netty.channel.SimpleChannelUpstreamHandler] []
     (channelConnected [^ChannelHandlerContext ctx ^ChannelStateEvent event]
       (let [^Channel channel (.getChannel ctx)
@@ -72,13 +87,7 @@
           (.getChannel)
           (.close))))
     (channelClosed [^ChannelHandlerContext ctx ^ChannelStateEvent event]
-      (let [^Channel channel (.getChannel ctx)
-            ^SslHandler new-handler (ssl-handler-factory)
-            ^ChannelPipeline pipeline (.getPipeline ctx)
-            ^SslHandler ssl-handler (.replace pipeline SslHandler "ssl" new-handler)]
-        (debug "Channel to" (if channel (.getRemoteAddress channel) "-") "was closed. Reopening it ...")
-        (-> (.connect bootstrap) (.addListener (future-listener [f]
-                                                 (swap! client-handle (fn [_] (.getChannel f))))))))))
+      (close-handler ctx event))))
 
 
 (defn- create-ssl-handler-factory [ssl-engine-factory] (fn [] (SslHandler. (ssl-engine-factory))))
@@ -98,15 +107,19 @@
 
 (defn- default-exception-handler [cause] (info cause "An exception occured while sending push notification to the server."))
 
-(defn- connect [^InetSocketAddress address ^SSLContext ssl-context time-out boss-executor worker-executor exception-handler]
+(defn- connect [^InetSocketAddress address ^SSLContext ssl-context time-out boss-executor worker-executor
+                exception-handler close-handler]
   "Creates a Netty Channel to connect to the server."
   (let [engine-factory (ssl-engine-factory ssl-context :use-client-mode true)
         bootstrap (-> (NioClientSocketChannelFactory.
                         boss-executor worker-executor) (ClientBootstrap.))
         ssl-handler-factory (create-ssl-handler-factory engine-factory)
         client-handle (atom nil)
-        pipeline-factory (create-pipeline-factory ssl-handler-factory (handler bootstrap ssl-handler-factory client-handle
-                                                                        exception-handler) (timer) time-out)
+        pipeline-factory (create-pipeline-factory ssl-handler-factory
+                           (handler bootstrap ssl-handler-factory client-handle
+                             exception-handler
+                             (close-handler bootstrap ssl-handler-factory client-handle))
+                           (timer) time-out)
         bootstrap (doto bootstrap
                     (.setOption "connectTimeoutMillis" 5000)
                     (.setPipelineFactory pipeline-factory)
@@ -125,8 +138,7 @@
 
 (defprotocol Connection
   (is-connected? [this] "Determines is a connection is connected")
-  (write-message [this message] "Writes a message")
-  (disconnect [this] "Disconnects a connection from the server"))
+  (write-message [this message] "Writes a message"))
 
 (defprotocol Result
   (success? [this] "Determines if the send operation was a success.")
@@ -140,17 +152,19 @@
   "Creates a connection the the Apple push notification service."
   [^InetSocketAddress address
    ^SSLContext ssl-context
-   & {:keys [time-out boss-executor worker-executor exception-handler]
+   & {:keys [time-out boss-executor worker-executor exception-handler close-handler]
       :or {time-out 300
            boss-executor (default-thread-pool)
            worker-executor (default-thread-pool)
-           exception-handler default-exception-handler}}]
-  (let [client-handle (connect address ssl-context time-out boss-executor worker-executor exception-handler)]
+           exception-handler default-exception-handler
+           close-handler reopening-close-handler}}]
+  (let [client-handle (connect address ssl-context time-out boss-executor worker-executor exception-handler close-handler)]
     (when client-handle
       (reify Connection
         (is-connected? [_] (when-let [^Channel channel @client-handle] (.isConnected channel)))
-        (disconnect [_] (when-let [^Channel channel @client-handle] (.close channel)))
-        (write-message [_ message] (when-let [^Channel channel @client-handle] (.write channel message)))))))
+        (write-message [_ message] (when-let [^Channel channel @client-handle] (.write channel message)))
+        java.io.Closeable
+        (close [this] (when-let [^Channel channel @client-handle] (.close channel)))))))
 
 (defn send-message
   "Sends a message in the standard message format to the Apple push service"
@@ -162,10 +176,11 @@
 
 (defn send-enhanced-message
   "Sends a message in the enhanced message format to the Apple push service"
-  [^herolabs.apns.push.Connection connection ^String device-token message]
+  [^herolabs.apns.push.Connection connection ^String device-token message  & {:keys [completed-listener]}]
   (when (and connection device-token message)
-    (let [msg (with-meta message {:device-token device-token :format :enhanced})]
-      (.write-message connection msg))))
+    (loop [[listener & rest] (if (sequential? completed-listener) completed-listener [completed-listener])
+           ^ChannelFuture future (.write-message connection (with-meta message {:device-token device-token :format :enhanced}))]
+      (if listener (recur rest (doto future (.addListener listener))) future))))
 
 (defn dev-address
   "The Apple sandbox address for the push service."

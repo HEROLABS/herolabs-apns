@@ -1,7 +1,9 @@
 (ns herolabs.apns.protocol
   (:require [clj-json.core :as json])
-  (:import [org.jboss.netty.channel Channel ChannelHandlerContext]
-           [org.jboss.netty.buffer ChannelBuffer ChannelBuffers]
+  (:use [clojure.tools.logging])
+  (:import [java.util List]
+           [io.netty.channel Channel ChannelHandlerContext]
+           [io.netty.buffer ByteBuf ByteBufAllocator Unpooled ByteBufUtil]
            [java.nio ByteOrder]
            [org.apache.commons.codec.binary Hex]
            [java.util.concurrent.atomic AtomicInteger]))
@@ -28,76 +30,83 @@
   (binding [json/*coercions* *coercions*]
     (json/generate-string msg)))
 
-(defn- dynamic-buffer [^long len]
-  "Creates a dynamic buffer."
-  (ChannelBuffers/dynamicBuffer ^ByteOrder ByteOrder/BIG_ENDIAN (int len)))
+(defn encode-item [^ByteBuf buffer number ^String token msg id expires priority]
 
-(defn- encode-message [^String device-token msg]
-  "Encodes a message into the standard APNS protocol format
-  http://developer.apple.com/library/mac/#documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/CommunicatingWIthAPS/CommunicatingWIthAPS.html"
-  (let [^bytes token (.decode hex-codec device-token)
+  (let [^bytes token (.decode hex-codec token)
         ^String serialized (serialize msg)
-        bytes (.getBytes serialized)
-        ^ChannelBuffer buffer (dynamic-buffer (+ 1 2 (count token) 2 (count bytes)))]
-    (doto buffer
-      (.writeBytes ^bytes standard-head)
-      (.writeShort (int (count token)))
-      (.writeBytes token)
-      (.writeShort (int (count bytes)))
-      (.writeBytes bytes))))
+        payload (.getBytes serialized)
+        item-length (+ (count token) (count payload) 4 4 1)]
+    (info "number:" number "token:" (count token) "payload:" (count payload) "id:" id "->" item-length)
+    (info "msg:" serialized " (" (count payload) ")")
+    (if (> (count payload) 255)
+      (do (warn "Message with" (count payload) "bytes to long:" serialized) buffer)
+      (-> buffer
+        (.writeByte (byte number))
+        (.writeShort (short item-length))
+        (.writeBytes token)
+        (.writeBytes payload)
+        (.writeInt (int id))
+        (.writeInt (int (or expires (+ 3600 (quot (System/currentTimeMillis)1000 )))))
+        (.writeByte (byte (condp = priority
+                            :immediately 10
+                            :energy-efficient 5
+                            10)))))))
 
+(defn encode-frame
+  "Encodes a frame from the messages supplied
+  https://developer.apple.com/library/ios/documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/Chapters/CommunicatingWIthAPS.html"
+  [messages expires priority ^AtomicInteger id-gen]
+  (let [^ByteBuf body-buffer (loop [messages messages
+                                    ^ByteBuf buffer (Unpooled/buffer (* (count messages) 256))
+                                    number 1]
+                               (if-let [msg (first messages)]
+                                 (if-let [token (:device-token (meta msg))]
+                                   (if-not (associative? msg)
+                                     (do
+                                       (warn "Unsupported message format on message number" number ", message will be skipped.")
+                                       (recur (rest messages) buffer number))
+                                     (recur
+                                       (rest messages)
+                                       (encode-item buffer number token msg (.getAndIncrement id-gen) (or (:expires (meta msg)) expires) (or (:priority (meta msg)) priority))
+                                       (inc number)))
+                                   (recur (rest messages) buffer number))
+                                 buffer)
+                               )
+        ^ByteBuf header-buffer (-> (Unpooled/buffer 5)
+                                 (.writeByte (byte 2))
+                                 (.writeInt (spy (.readableBytes body-buffer))))
+        frame-buffer (Unpooled/copiedBuffer (into-array ByteBuf [header-buffer body-buffer]))]
+    (info (ByteBufUtil/hexDump header-buffer))
+    (info (ByteBufUtil/hexDump body-buffer))
+    #_ (info (ByteBufUtil/hexDump frame-buffer))
+    frame-buffer
+    ))
 
-
-(defn encode-enhanced-message [^AtomicInteger id-gen ^String device-token msg]
-  "Encodes a message into the enhanced APNS protocol format
-  http://developer.apple.com/library/mac/#documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/CommunicatingWIthAPS/CommunicatingWIthAPS.html"
-  (let [^bytes token (.decode hex-codec device-token)
-        m (meta msg)
-        id (.getAndIncrement id-gen)
-        expires (or (get m :expires) Integer/MAX_VALUE)
-        ^String serialized (serialize msg)
-        bytes (.getBytes serialized)
-        ^ChannelBuffer buffer (dynamic-buffer (+ 1 4 4 2 (count token) 2 (count bytes)))]
-    (doto buffer
-      (.writeBytes enhanced-head)
-      (.writeInt id)
-      (.writeInt (int expires))
-      (.writeShort (int (count token)))
-      (.writeBytes token)
-      (.writeShort (int (count bytes)))
-      (.writeBytes bytes)))
-  )
-
-
-(defn encoder [^AtomicInteger id-gen]
+(defn codec [^AtomicInteger id-gen expires priority]
   "Creates an encoder for the APNS protocol"
-  (proxy [org.jboss.netty.handler.codec.oneone.OneToOneEncoder] []
-    (encode [^ChannelHandlerContext ctx ^Channel channel msg]
-      (if-not (associative? msg)
-        (throw (IllegalArgumentException. "Only accociative datastructures may be send to the push notification service."))
-        (if-let [device-token (get (meta msg) :device-token )]
-          (if (= :enhanced (get (meta msg) :format ))
-            (encode-enhanced-message id-gen device-token msg)
-            (encode-message device-token msg))
-          (throw (IllegalArgumentException. "Message must contain a :device-token as meta.")))))))
-
-
-(defn decoder []
-  "Creates an decoder for the APNS protocol."
-  (proxy [org.jboss.netty.handler.codec.oneone.OneToOneDecoder] []
-    (decode [^ChannelHandlerContext ctx ^Channel channel ^ChannelBuffer msg]
+  (proxy [io.netty.handler.codec.MessageToMessageCodec] []
+    (encode [^ChannelHandlerContext ctx msgs ^List out]
+      (let [meta-data (meta msgs)]
+        (cond
+          (sequential? msgs) (.add out (encode-frame msgs (or (:expires meta-data) expires) (or (:priority meta-data) priority) id-gen))
+          (associative? msgs) (.add out (encode-frame [msgs] (or (:expires meta-data) expires) (or (:priority meta-data) priority) id-gen))
+          :otherwise (throw (IllegalArgumentException. "Unrecognized message format:" (type msgs)))
+          )))
+    (decode [^ChannelHandlerContext ctx ^ByteBuf msg ^List out]
       (let [command (.readByte msg)
             status (.readByte msg)
             id (.readInt msg)]
-        {:status (get status-dictionary status :unknown ) :id id}))))
+        (info "status:" status ", id:" id)
+        (.add out {:status (get status-dictionary status :unknown ) :id id})))))
+
 
 (defn feedback-decoder []
   "Creates an decoder for the APNS protocol."
-  (proxy [org.jboss.netty.handler.codec.oneone.OneToOneDecoder] []
-    (decode [^ChannelHandlerContext ctx ^Channel channel ^ChannelBuffer msg]
+  (proxy [io.netty.handler.codec.MessageToMessageDecoder] []
+    (decode [^ChannelHandlerContext ctx ^ByteBuf msg ^List out]
       (let [time (* (.readInt msg) 1000)
             token-len (.readShort msg)
             token-bytes (byte-array token-len)]
         (.readBytes msg token-bytes)
         (let [token (Hex/encodeHexString token-bytes)]
-          [token time])))))
+          (.add out [token time]))))))

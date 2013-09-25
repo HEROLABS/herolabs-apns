@@ -1,98 +1,70 @@
 (ns herolabs.apns.feedback
   (:use [clojure.tools.logging]
         [herolabs.apns.ssl :only (ssl-context ssl-engine)]
-        [herolabs.apns.protocol :only (encoder decoder feedback-decoder)]
+        [herolabs.apns.protocol :only (feedback-decoder)]
         [clojure.stacktrace])
-  (:import [org.jboss.netty.channel Channel ChannelFuture Channels ChannelPipeline ChannelPipelineFactory ChannelEvent
-            ChannelHandlerContext ChannelStateEvent ExceptionEvent MessageEvent WriteCompletionEvent
-            SimpleChannelUpstreamHandler]
-           [org.jboss.netty.channel.socket.nio NioClientSocketChannelFactory]
-           [org.jboss.netty.bootstrap ClientBootstrap]
-           [org.jboss.netty.handler.ssl SslHandler]
-           [org.jboss.netty.handler.timeout ReadTimeoutHandler]
-           [org.jboss.netty.util HashedWheelTimer]
+  (:import [io.netty.channel Channel ChannelFuture ChannelPromise ChannelHandlerContext ChannelInitializer ChannelDuplexHandler]
+           [io.netty.channel.socket SocketChannel]
+           [io.netty.channel.socket.nio NioSocketChannel]
+           [io.netty.channel.nio NioEventLoopGroup]
+           [io.netty.bootstrap Bootstrap]
+           [io.netty.handler.ssl SslHandler]
+           [io.netty.handler.timeout IdleState IdleStateHandler]
            [java.util.concurrent Executors ExecutorService ThreadFactory]
            [java.util.concurrent LinkedBlockingQueue TimeUnit]
            [java.net InetSocketAddress]
            [javax.net.ssl SSLContext]))
 
 
-(def ^:private default-thread-pool* (atom nil))
-
-(defn default-thread-pool []
-  (or @default-thread-pool*
-    (swap! default-thread-pool*
-      (fn [_] (Executors/newCachedThreadPool
-                (let [number (atom 1)
-                      sm (System/getSecurityManager)
-                      group (if sm (.getThreadGroup sm) (.getThreadGroup (Thread/currentThread)))]
-                  (reify ThreadFactory
-                    (newThread [_ r] (let [name (str "apns-feedback-pool-" (swap! number inc))
-                                           ^Thread t (Thread. group r name 0)]
-                                       (when (.isDaemon t) (.setDaemon t false))
-                                       (when (not= Thread/NORM_PRIORITY (.getPriority t)) (.setPriority t Thread/NORM_PRIORITY))
-                                       t)))))))))
-
-(def ^:private timer* (ref nil))
-
-(defn- timer [] (or @timer* (dosync (alter timer* (fn [_] (HashedWheelTimer.))))))
-
 
 (defn- handler [^LinkedBlockingQueue queue]
   "Function to create a ChannelUpstreamHandler"
-  (proxy [org.jboss.netty.channel.SimpleChannelUpstreamHandler] []
-    (channelConnected [^ChannelHandlerContext ctx ^ChannelStateEvent event]
-      (debug "channelConnected")
-      (let [^SslHandler ssl-handler (-> ctx
-                                      (.getPipeline)
-                                      (.get SslHandler))]
-        (.handshake ssl-handler)
-        ))
-    (messageReceived [^ChannelHandlerContext ctx ^MessageEvent event]
-      (debug "messageReceived - " (.getMessage event))
-      (.put queue (.getMessage event)))
-    (exceptionCaught [^ChannelHandlerContext ctx ^ExceptionEvent event]
-      (debug (.getCause event) "exceptionCaught")
-      (-> event
-        (.getChannel)
-        (.close)))
-    (channelClosed [^ChannelHandlerContext ctx ^ChannelStateEvent event]
-      (debug "channelClosed"))))
+  (proxy [io.netty.channel.ChannelInboundHandlerAdapter] []
+    (channelRead [^ChannelHandlerContext ctx msg]
+      (.put queue msg))
+    (exceptionCaught [^ChannelHandlerContext ctx ^Throwable cause]
+      (let [^Channel channel (.channel ctx)]
+        (debug cause "An exception occured on channel to" (if channel (.getRemoteAddress channel) "-") ", closing channel ...")
+        (.close channel)))
+    (channelActive [^ChannelHandlerContext ctx]
+      (debug "Channel to "(if-let [c (.channel ctx)] (.remoteAddress c) "-") " got activated."))
+    (channelInactive [^ChannelHandlerContext ctx]
+      (debug "Channel got inactive"))
+    (userEventTriggered [^ChannelHandlerContext ctx event]
+      (cond
+        (instance? IdleState event) (.close ctx)
+        :else nil))))
 
 
-
-(defn- create-pipeline-factory [ssl-engine handler time-out]
+(defn- create-channel-initializer [ssl-engine handler time-out]
   "Creates a pipeline factory"
-  (reify
-    ChannelPipelineFactory
-    (getPipeline [this]
-      (doto (Channels/pipeline)
-        (.addLast "ssl" (SslHandler. ssl-engine))
-        (.addLast "decoder" (feedback-decoder))
-        (.addLast "timeout" (ReadTimeoutHandler. (timer) (int (if time-out time-out 300))))
-        (.addLast "handler" handler)))))
+  (proxy [ChannelInitializer] []
+    (initChannel [^SocketChannel channel]
+      (let [pipeline (.pipeline channel)]
+        (doto pipeline
+          (.addLast "ssl" (SslHandler. ssl-engine))
+          (.addLast "decoder" (feedback-decoder))
+          (.addLast "timeout" (IdleStateHandler. 0 time-out 0))
+          (.addLast "protocollHandler" handler))))))
 
-(defn- connect [^InetSocketAddress address ^SSLContext ssl-context time-out queue boss-executor worker-executor]
+(defn- connect [^InetSocketAddress address ^SSLContext ssl-context queue time-out event-loop]
   "creates a netty Channel to connect to the server."
   (try
-    (let [engine (ssl-engine ssl-context :use-client-mode true)
-          pipeline-factory (create-pipeline-factory engine (handler queue) time-out)
-          bootstrap (doto (-> (NioClientSocketChannelFactory. boss-executor worker-executor)
-                            (ClientBootstrap.))
-                      (.setOption "connectTimeoutMillis" 5000)
-                      (.setPipelineFactory pipeline-factory))
-          future (.connect bootstrap address)
-          channel (-> future
-                    (.awaitUninterruptibly)
-                    (.getChannel)
-                    )]
+    (let [ssl-engine (ssl-engine ssl-context :use-client-mode true)
+          bootstrap (-> (Bootstrap.)
+                      (.group event-loop)
+                      (.channel NioSocketChannel)
+                      (.handler (create-channel-initializer ssl-engine (handler queue) time-out))
+                      )
+
+          future (-> bootstrap (.connect address) (.sync))
+          channel (.channel future)
+          ]
       (if (.isSuccess future)
         channel
-        (do
-          (.releaseExternalResources bootstrap)
-          nil)))
+        nil))
     (catch java.lang.Exception e
-      (warn e "Error"))))
+      (warn e "An error occure while connecting to Apple feedback service."))))
 
 
 (defn- read-feedback [^LinkedBlockingQueue queue ^Channel channel]
@@ -100,17 +72,19 @@
   (lazy-seq
     (if-let [next (.poll queue 10 TimeUnit/SECONDS)]
       (cons next (read-feedback queue channel))
-      (when (.isConnected channel)
+      (when (.isActive channel)
         (.close channel)
         nil))))
 
-(defn feedback [^InetSocketAddress address ^SSLContext ssl-context & {:keys [time-out boss-executor worker-executor]
-                                                                      :or {time-out 300
-                                                                           boss-executor (default-thread-pool)
-                                                                           worker-executor (default-thread-pool)}}]
+(def ^:private default-event-loop (NioEventLoopGroup.))
+
+
+(defn feedback [^InetSocketAddress address ^SSLContext ssl-context & {:keys [time-out event-loop]
+                                                                      :or {time-out 30
+                                                                           event-loop default-event-loop}}]
   "Creates a seq with the results from the feedback service"
   (let [queue (LinkedBlockingQueue.)
-        channel (connect address ssl-context time-out queue boss-executor worker-executor)]
+        channel (connect address ssl-context queue time-out event-loop)]
     (read-feedback queue channel)))
 
 (defn dev-address [] (InetSocketAddress. "feedback.sandbox.push.apple.com" 2196))

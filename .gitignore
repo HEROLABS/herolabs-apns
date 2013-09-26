@@ -3,6 +3,7 @@
 /classes
 /checkouts
 pom.xml
+pom.xml.asc
 *.jar
 *.class
 .lein-deps-sum
@@ -10,3 +11,6 @@ pom.xml
 .lein-plugins
 .idea
 *.iml
+*.ipr
+*.iws
+scrapbook.clj

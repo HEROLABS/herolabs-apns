@@ -1,7 +1,8 @@
 (ns herolabs.apns.push
+  (:refer-clojure :exclude [send])
   (:use [clojure.tools.logging]
         [herolabs.apns.ssl :only (ssl-context ssl-engine ssl-engine-factory)]
-        [herolabs.apns.protocol :only (codec)]
+        [herolabs.apns.protocol :only (codec queue-entry-comparator)]
         [clojure.stacktrace])
   (:import [io.netty.channel Channel ChannelFuture ChannelPromise ChannelHandlerContext ChannelInitializer ChannelDuplexHandler]
            [io.netty.channel.socket SocketChannel]
@@ -12,7 +13,8 @@
            [io.netty.handler.timeout IdleStateHandler IdleState]
            [java.util.concurrent.atomic AtomicInteger]
            [java.net InetSocketAddress SocketAddress]
-           [javax.net.ssl SSLContext]))
+           [javax.net.ssl SSLContext]
+           [java.util.concurrent TimeUnit]))
 
 
 (def ^:private default-thread-pool* (atom nil))
@@ -34,7 +36,7 @@
                                                                    (instance? IdleState event) (.close ctx)
                                                                    :else nil)
                                                                  )
-                                 :channel-inactive-handler (fn channel-inactive-handler [ctx] (debug "Connection to" (if-let [c (.channel ctx)] (.remoteAddress c) "-") "went inactive."))
+                                 :channel-inactive-handler (fn channel-inactive-handler [ctx sent-queue] (debug "Connection to" (if-let [c (.channel ctx)] (.remoteAddress c) "-") "went inactive." (count sent-queue) "messages should be resent."))
                                  :exception-caught-handler (fn exception-caught [^ChannelHandlerContext ctx ^Throwable cause]
                                                              (let [^Channel channel (.channel ctx)]
                                                                (debug cause "An exception occured on channel to" (if channel (.getRemoteAddress channel) "-") ", closing channel ...")
@@ -42,7 +44,7 @@
 
 (defn- handler
   "Function to create a ChannelDuplexHandler"
-  [handlers]
+  [handlers sent-queue]
   (proxy [io.netty.channel.ChannelDuplexHandler] []
     (bind [^ChannelHandlerContext ctx ^SocketAddress local-address ^ChannelPromise future]
       (when-not (when-let [h (get handlers :bind-handler )]
@@ -101,7 +103,7 @@
         (proxy-super channelActive ctx)))
     (channelInactive [^ChannelHandlerContext ctx]
       (when-not (when-let [h (get handlers :channel-inactive-handler )]
-                  (h ctx)
+                  (h ctx (map #(nth % 2) @sent-queue))
                   (:no-super (meta h)))
         (proxy-super channelInactive ctx)))
     (channelRead [^ChannelHandlerContext ctx msg]
@@ -130,7 +132,7 @@
                   (:no-super (meta h)))
         (proxy-super exceptionCaught ctx cause)))))
 
-(defn- create-channel-initializer [ssl-engine protocoll-handler time-out]
+(defn- create-channel-initializer [ssl-engine protocoll-handler sent-queue time-out expires priority]
   "Creates a pipeline factory"
   (proxy [ChannelInitializer] []
     (initChannel [^SocketChannel channel]
@@ -138,25 +140,37 @@
             pipeline (.pipeline channel)]
         (doto pipeline
           (.addLast "ssl" (SslHandler. ssl-engine))
-          (.addLast "codec" (codec id-gen nil nil))
+          (.addLast "codec" (codec id-gen sent-queue expires priority))
           (.addLast "idleStateHandler" (IdleStateHandler. 0 time-out 0))
           (.addLast "protocollHandler" protocoll-handler))))))
 
 (defn- default-exception-handler [cause] (info cause "An exception occured while sending push notification to the server."))
 
-(defn- connect [^InetSocketAddress address ^SSLContext ssl-context time-out handlers event-loop]
+
+(defn- connect [^InetSocketAddress address ^SSLContext ssl-context handlers event-loop time-out expires priority]
   "Creates a Netty Channel to connect to the server."
   (let [ssl-engine (ssl-engine ssl-context :use-client-mode true)
+        sent-queue (atom (sorted-set-by queue-entry-comparator))
         bootstrap (-> (Bootstrap.)
                     (.group event-loop)
                     (.channel NioSocketChannel)
-                    (.handler (create-channel-initializer ssl-engine (handler handlers) time-out))
+                    (.handler (create-channel-initializer ssl-engine (handler handlers sent-queue) sent-queue time-out expires priority))
                     )
         future (-> bootstrap (.connect address) (.sync))
-        channel (.channel future)
         ]
-    channel
-    ))
+    (when (.isSuccess future)
+      (let [channel (.channel future)
+            schedule-future (.scheduleWithFixedDelay event-loop (fn sent-queue-reaper []
+                                                                  (let [threshold (- (System/currentTimeMillis) 15000)]
+                                                                    (swap! sent-queue (fn [msgs] (apply sorted-set-by queue-entry-comparator (remove #(let [t (second %)] (< t threshold)) msgs))))
+                                                                    #_ (debug "Shortended sent queue to" (count @sent-queue) "entries.")
+                                                                    )) 15 15 java.util.concurrent.TimeUnit/SECONDS)
+            close-future (.closeFuture channel)]
+        (.addListener close-future (future-listener [f]
+                                     (.cancel schedule-future false)
+                                     (debug "Cancelled sent-queue reaper.")))
+        channel
+        ))))
 
 (defprotocol Connection
   (is-active? [this] "Determines is a connection is connected")
@@ -180,15 +194,19 @@
   "Creates a connection the the Apple push notification service."
   [^InetSocketAddress address
    ^SSLContext ssl-context
-   & {:keys [time-out event-loop]
+   & {:keys [error-handler time-out event-loop expires priority]
       :or {time-out 300
            event-loop default-event-loop}
       :as params}]
   (let [handlers (merge default-handlers (select-keys (into {} params) handler-names))
-        channel (connect address ssl-context time-out handlers event-loop)]
+        handlers (if-not error-handler handlers
+                   (if (:channel-read-handler params)
+                     (throw (IllegalArgumentException. "Either supply :error-handler or :channel-read-handler."))
+                     (assoc handlers :channel-read-handler (fn [ctx msg] (error-handler msg)))))
+        channel (connect address ssl-context handlers event-loop time-out expires priority)]
     (when channel (NettyConnection. channel))))
 
-(defn send-message
+(defn send-to
   "Sends a message in the standard message format to the Apple push service"
   [^herolabs.apns.push.Connection connection ^String device-token message & {:keys [completed-listener]}]
   (when (and connection device-token message)
@@ -196,13 +214,14 @@
            ^ChannelFuture future (.write-message connection (with-meta message {:device-token device-token}))]
       (if listener (recur rest (.addListener future listener)) future))))
 
-(defn send-enhanced-message
-  "Sends a message in the enhanced message format to the Apple push service"
-  [^herolabs.apns.push.Connection connection ^String device-token message & {:keys [completed-listener]}]
-  (when (and connection device-token message)
+(defn send
+  "Sends a message in the standard message format to the Apple push service"
+  [^herolabs.apns.push.Connection connection message & {:keys [completed-listener]}]
+  (when (and connection message)
     (loop [[listener & rest] (if (sequential? completed-listener) completed-listener [completed-listener])
-           ^ChannelFuture future (.write-message connection (with-meta message {:device-token device-token :format :enhanced}))]
+           ^ChannelFuture future (.write-message connection message)]
       (if listener (recur rest (.addListener future listener)) future))))
+
 
 (defn dev-address
   "The Apple sandbox address for the push service."

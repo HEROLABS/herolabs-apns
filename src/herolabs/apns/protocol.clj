@@ -20,84 +20,91 @@
                                   (byte 5) :invalid-token-size
                                   (byte 6) :invalid-topic-size
                                   (byte 7) :invalid-payload-size
-                                  (byte 8) :invalid-token})
+                                  (byte 8) :invalid-token
+                                  (byte 10) :shutdown})
 
 
 (def ^:dynamic *coercions* json/*coercions*)
+
+(def queue-entry-comparator (reify java.util.Comparator
+                              (compare [_ a b]
+                                (let [aid (first a)
+                                      bid (first b)
+                                      idcmp (compare aid bid)]
+                                  (if (zero? idcmp)
+                                    (if (= a b) 0 1)
+                                    idcmp)))))
 
 (defn- serialize [msg]
   "Serializes the map into a JSON representation"
   (binding [json/*coercions* *coercions*]
     (json/generate-string msg)))
 
-(defn encode-item [^ByteBuf buffer number ^String token msg id expires priority]
-
-  (let [^bytes token (.decode hex-codec token)
-        ^String serialized (serialize msg)
-        payload (.getBytes serialized)
-        item-length (+ (count token) (count payload) 4 4 1)]
-    (info "number:" number "token:" (count token) "payload:" (count payload) "id:" id "->" item-length)
-    (info "msg:" serialized " (" (count payload) ")")
-    (if (> (count payload) 255)
-      (do (warn "Message with" (count payload) "bytes to long:" serialized) buffer)
-      (-> buffer
-        (.writeByte (byte number))
-        (.writeShort (short item-length))
-        (.writeBytes token)
-        (.writeBytes payload)
-        (.writeInt (int id))
-        (.writeInt (int (or expires (+ 3600 (quot (System/currentTimeMillis)1000 )))))
-        (.writeByte (byte (condp = priority
-                            :immediately 10
-                            :energy-efficient 5
-                            10)))))))
-
 (defn encode-frame
   "Encodes a frame from the messages supplied
   https://developer.apple.com/library/ios/documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/Chapters/CommunicatingWIthAPS.html"
-  [messages expires priority ^AtomicInteger id-gen]
-  (let [^ByteBuf body-buffer (loop [messages messages
-                                    ^ByteBuf buffer (Unpooled/buffer (* (count messages) 256))
-                                    number 1]
-                               (if-let [msg (first messages)]
-                                 (if-let [token (:device-token (meta msg))]
-                                   (if-not (associative? msg)
-                                     (do
-                                       (warn "Unsupported message format on message number" number ", message will be skipped.")
-                                       (recur (rest messages) buffer number))
-                                     (recur
-                                       (rest messages)
-                                       (encode-item buffer number token msg (.getAndIncrement id-gen) (or (:expires (meta msg)) expires) (or (:priority (meta msg)) priority))
-                                       (inc number)))
-                                   (recur (rest messages) buffer number))
-                                 buffer)
-                               )
-        ^ByteBuf header-buffer (-> (Unpooled/buffer 5)
-                                 (.writeByte (byte 2))
-                                 (.writeInt (spy (.readableBytes body-buffer))))
-        frame-buffer (Unpooled/copiedBuffer (into-array ByteBuf [header-buffer body-buffer]))]
-    (info (ByteBufUtil/hexDump header-buffer))
-    (info (ByteBufUtil/hexDump body-buffer))
-    #_ (info (ByteBufUtil/hexDump frame-buffer))
-    frame-buffer
-    ))
+  [msg id expires priority]
+  (let [meta-data (meta msg)]
+    (if-let [token (:device-token meta-data)]
+      (let [^bytes token (.decode hex-codec token)
+            ^String serialized (serialize msg)
+            payload (.getBytes serialized)
+            expries (or (:expires meta-data) expires)
+            priority (or (:priority meta-data) priority)
+            buffer-size (+ (+ 1 2 32) ;token
+                          (+ 1 2 (count payload)) ;payload
+                          (+ 1 2 4) ;notification id
+                          (if expires 7 0) ;expires field
+                          (if priority 4 0)) ;priority field
+            ^ByteBuf body-buffer (-> (Unpooled/buffer buffer-size)
+                                   (.writeByte 1)
+                                   (.writeShort 32)
+                                   (.writeBytes token)
+                                   (.writeByte 2)
+                                   (.writeShort (count payload))
+                                   (.writeBytes payload)
+                                   (.writeByte 3)
+                                   (.writeShort 4)
+                                   (.writeInt id))
+            body-buffer (if-not expires body-buffer (-> body-buffer
+                                                      (.writeByte 4)
+                                                      (.writeShort 4)
+                                                      (.writeInt (int (cond
+                                                                        (fn? expires) (expires)
+                                                                        (type java.util.Date expires) (quot (.getTime expires) 1000)
+                                                                        (integer? expires) expires
+                                                                        (number? expires) (quot expires 1000)
+                                                                        :else 0)))))
+            body-buffer (if-not priority body-buffer (-> body-buffer
+                                                       (.writeByte 5)
+                                                       (.writeShort 1)
+                                                       (.writeByte (byte (condp = priority
+                                                                           :immediately 10
+                                                                           :energy-efficient 5
+                                                                           5)))))
+            ^ByteBuf header-buffer (-> (Unpooled/buffer 5)
+                                     (.writeByte (byte 2))
+                                     (.writeInt (.readableBytes body-buffer)))
+            frame-buffer (Unpooled/copiedBuffer (into-array ByteBuf [header-buffer body-buffer]))]
+        frame-buffer)
+      (throw (IllegalArgumentException. "Message must contain device-token as meta data.")))))
 
-(defn codec [^AtomicInteger id-gen expires priority]
+(defn codec [^AtomicInteger id-gen sent-queue expires priority]
   "Creates an encoder for the APNS protocol"
   (proxy [io.netty.handler.codec.MessageToMessageCodec] []
-    (encode [^ChannelHandlerContext ctx msgs ^List out]
-      (let [meta-data (meta msgs)]
-        (cond
-          (sequential? msgs) (.add out (encode-frame msgs (or (:expires meta-data) expires) (or (:priority meta-data) priority) id-gen))
-          (associative? msgs) (.add out (encode-frame [msgs] (or (:expires meta-data) expires) (or (:priority meta-data) priority) id-gen))
-          :otherwise (throw (IllegalArgumentException. "Unrecognized message format:" (type msgs)))
-          )))
+    (encode [^ChannelHandlerContext ctx msg ^List out]
+      (let [id (.getAndIncrement id-gen)
+            out (.add out (encode-frame msg id expires priority))
+            sent (System/currentTimeMillis)]
+        (swap! sent-queue (fn [queue] (conj queue [id sent msg])))
+        out))
     (decode [^ChannelHandlerContext ctx ^ByteBuf msg ^List out]
       (let [command (.readByte msg)
             status (.readByte msg)
-            id (.readInt msg)]
-        (info "status:" status ", id:" id)
-        (.add out {:status (get status-dictionary status :unknown ) :id id})))))
+            id (.readInt msg)
+            faulty-message (nth (first (filter #(let [i (first %)] (= i id)) @sent-queue)) 2)
+            resent (swap! sent-queue (fn [msgs] (apply sorted-set-by queue-entry-comparator (filter #(let [i (first %)] (> i id)) msgs))))]
+        (.add out {:status (get status-dictionary status :unknown ) :id id :faulty faulty-message :resent resent})))))
 
 
 (defn feedback-decoder []

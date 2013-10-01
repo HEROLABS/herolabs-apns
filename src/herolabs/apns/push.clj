@@ -10,14 +10,14 @@
            [io.netty.channel.nio NioEventLoopGroup]
            [io.netty.bootstrap Bootstrap]
            [io.netty.handler.ssl SslHandler]
-           [io.netty.handler.timeout IdleStateHandler IdleState]
+           [io.netty.handler.timeout IdleStateHandler IdleState IdleStateEvent]
            [java.util.concurrent.atomic AtomicInteger]
            [java.net InetSocketAddress SocketAddress]
            [javax.net.ssl SSLContext]
            [java.util.concurrent TimeUnit]))
 
 
-(def ^:private default-thread-pool* (atom nil))
+(defonce ^:private connection-id-generator (AtomicInteger.))
 
 (defmacro future-listener [params & body]
   (cond
@@ -33,14 +33,18 @@
 (def ^:private default-handlers {:connect-handler (fn connect-handler [_ remote-address _ _] (info "Connected to " remote-address))
                                  :user-event-triggered-handler (fn user-event-triggered [^ChannelHandlerContext ctx event]
                                                                  (cond
-                                                                   (instance? IdleState event) (.close ctx)
-                                                                   :else nil)
-                                                                 )
-                                 :channel-inactive-handler (fn channel-inactive-handler [ctx sent-queue] (debug "Connection to" (if-let [c (.channel ctx)] (.remoteAddress c) "-") "went inactive." (count sent-queue) "messages should be resent."))
+                                                                   (instance? IdleStateEvent event) (-> ctx (.channel) (.close))
+                                                                   :else nil))
+                                 :channel-inactive-handler (fn channel-inactive-handler [ctx sent-queue] (debug "Connection" (if-let [c (.channel ctx)] (.remoteAddress c) "-") "went inactive." (count sent-queue) "messages should be resent."))
                                  :exception-caught-handler (fn exception-caught [^ChannelHandlerContext ctx ^Throwable cause]
                                                              (let [^Channel channel (.channel ctx)]
                                                                (debug cause "An exception occured on channel to" (if channel (.getRemoteAddress channel) "-") ", closing channel ...")
                                                                (.close channel)))})
+
+#_ (defn tracing-handler [handler] (fn [^ChannelHandlerContext ctx & other] (log (name handler) "-" other)))
+
+#_ (def tracing-handlers (into {} (for [handler handler-names] [handler (logging-handler handler)])))
+
 
 (defn- handler
   "Function to create a ChannelDuplexHandler"
@@ -132,12 +136,11 @@
                   (:no-super (meta h)))
         (proxy-super exceptionCaught ctx cause)))))
 
-(defn- create-channel-initializer [ssl-engine protocoll-handler sent-queue time-out expires priority]
+(defn- create-channel-initializer [ssl-engine protocoll-handler sent-queue id-gen time-out expires priority]
   "Creates a pipeline factory"
   (proxy [ChannelInitializer] []
     (initChannel [^SocketChannel channel]
-      (let [id-gen (AtomicInteger. (rand-int 1000))
-            pipeline (.pipeline channel)]
+      (let [pipeline (.pipeline channel)]
         (doto pipeline
           (.addLast "ssl" (SslHandler. ssl-engine))
           (.addLast "codec" (codec id-gen sent-queue expires priority))
@@ -147,14 +150,15 @@
 (defn- default-exception-handler [cause] (info cause "An exception occured while sending push notification to the server."))
 
 
-(defn- connect [^InetSocketAddress address ^SSLContext ssl-context handlers event-loop time-out expires priority]
+(defn- connect [^InetSocketAddress address ^SSLContext ssl-context handlers event-loop id-generator time-out expires priority]
   "Creates a Netty Channel to connect to the server."
   (let [ssl-engine (ssl-engine ssl-context :use-client-mode true)
         sent-queue (atom (sorted-set-by queue-entry-comparator))
         bootstrap (-> (Bootstrap.)
                     (.group event-loop)
                     (.channel NioSocketChannel)
-                    (.handler (create-channel-initializer ssl-engine (handler handlers sent-queue) sent-queue time-out expires priority))
+                    (.handler (create-channel-initializer ssl-engine (handler handlers sent-queue) sent-queue id-generator
+                                time-out expires priority))
                     )
         future (-> bootstrap (.connect address) (.sync))
         ]
@@ -174,18 +178,24 @@
 
 (defprotocol Connection
   (is-active? [this] "Determines is a connection is connected")
-  (write-message [this message] "Writes a message"))
+  (write-message [this message] "Writes a message")
+  (active-since [this] "Returns the date (as long) since when the connection is active.")
+  (messages-sent [this] "Returns the number of messages sent."))
 
 (defn success?
   "Checks of a future finished successful. Also waits uninterruptibly until the future finished to determine the result."
   [^ChannelFuture future] (when future (-> future (.awaitUninterruptibly) (.isSuccess))))
 
-(deftype NettyConnection [^SocketChannel channel]
+(deftype NettyConnection [id ^SocketChannel channel since ^AtomicInteger counter]
   Connection
   (is-active? [_] (when-let [^Channel channel channel] (.isActive channel)))
   (write-message [_ message] (.writeAndFlush channel message))
+  (active-since [_] since)
   java.io.Closeable
-  (close [this] (.close channel)))
+  (close [this] (.close channel))
+  java.lang.Object
+  (toString [_] (str "NettyConnection("id":" (-> channel (.remoteAddress))))
+  (messages-sent [this] (.get counter)))
 
 
 (def ^:private default-event-loop (NioEventLoopGroup.))
@@ -203,8 +213,9 @@
                    (if (:channel-read-handler params)
                      (throw (IllegalArgumentException. "Either supply :error-handler or :channel-read-handler."))
                      (assoc handlers :channel-read-handler (fn [ctx msg] (error-handler msg)))))
-        channel (connect address ssl-context handlers event-loop time-out expires priority)]
-    (when channel (NettyConnection. channel))))
+        counter (AtomicInteger. 0)
+        channel (connect address ssl-context handlers event-loop counter time-out expires priority)]
+    (when channel (NettyConnection. (.getAndIncrement connection-id-generator) channel (System/currentTimeMillis) counter))))
 
 (defn send-to
   "Sends a message in the standard message format to the Apple push service"

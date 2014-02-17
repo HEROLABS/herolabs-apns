@@ -54,7 +54,7 @@
 (defn with-payload
   "Adds additional payload to the message (everything except the :aps key)."
   [message payload] (if-not (empty? payload)
-                      (merge (dissoc payload :aps ) message)
+                      (merge message (dissoc payload :aps))
                       message))
 
 (defn with-alert-body

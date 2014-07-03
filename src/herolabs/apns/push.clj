@@ -147,7 +147,7 @@
           (.addLast "idleStateHandler" (IdleStateHandler. 0 time-out 0))
           (.addLast "protocollHandler" protocoll-handler))))))
 
-(defn- default-exception-handler [cause] (info cause "An exception occured while sending push notification to the server."))
+(defn- default-exception-handler [cause] (warn cause "An exception occured while sending push notification to the server."))
 
 
 (defn- connect [^InetSocketAddress address ^SSLContext ssl-context handlers event-loop id-generator time-out expires priority]

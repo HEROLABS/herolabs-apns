@@ -55,7 +55,7 @@ certificate and key files. Then you can use the `keystore` function to create a 
 	      					  :cert-path cert-file)]
 		...
 	)
-                                      
+
 
 Unfortunately the certificates used by Apple are not signed by a major (known by the JRE) authority. So the connection
 would not be established by the JRE. You have to choices: a) import the Apple certificates into the JRE keystores (secure)
@@ -77,8 +77,8 @@ Now lets send a message:
 Due to the nature of the protocol the feedback is very "limitied". The 0.5.x-Series uses the most recent protocol version of the Apple service, so the feedback got better.
 
 
-### Error Handling 
-The error handling is new to the 0.5.x version series and a little more manual/explicit than before. 
+### Error Handling
+The error handling is new to the 0.5.x version series and a little more manual/explicit than before.
 
 Some good news first, you are able to provide some handling functions for almost every event Netty is providing. E.g. a `:disconnect-handler` to write something when the connection was disconnected:
 
@@ -90,7 +90,7 @@ The most intersting handler to supply are the `:channel-inactive-handler` and th
 
 The `:channel-inactive-handler` is called when the connection is closed and the underlying channel ist disconnected from the Netty EventLoop. You max pass an arity 2 function which will receive the `ChannelHandlerContext` and a list of messages which where sent to the APS service but should be re-sent. For details [look at the APS dokumentation](https://developer.apple.com/library/ios/documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/Chapters/WhatAreRemoteNotif.html) and continue reading.
 
-The `:error-handler` is a more convenient `:channel-read-handler` (therefore you may only supply one or the other when creating a connection). The only response Apple sends is an error response before disconnecting. The error handler will be called when receiving the error message from apple. You may supply an one argument function which will get a map like this: 
+The `:error-handler` is a more convenient `:channel-read-handler` (therefore you may only supply one or the other when creating a connection). The only response Apple sends is an error response before disconnecting. The error handler will be called when receiving the error message from apple. You may supply an one argument function which will get a map like this:
 
 	{:status :invalid-token :id 3892 :faulty {:aps { ... }} :resent ()}
 
@@ -102,32 +102,32 @@ The `:error-handler` is a more convenient `:channel-read-handler` (therefore you
 One more word on this messages that gone missing. Apple does not process any message after the faulty one. So the connection remembers (and forgets them after 15 seconds) of all messages sent. When the error message is received all messages before the faulty will also removed, so you get the ones which where sent and possibily not processed.
 
 So how to do the error handling:
-	
-	(def ^:private aps-connection (atom nil))
-	
-	(declare connection)
 
-	(defn- resent-handler []
-	  (fn resent-handler-fn [_ re-sent]
-	    (doseq [msg re-sent] (push/sent (connection) msg))))
+```clojure
+(def ^:private aps-connection (atom nil))
 
-	(defn- error-handler [error]
-      (swap! aps-connection (fn [_] nil))
-      (let [status (:status error)
-	        faulty (:faulty error)
-	        device-token (:devive-token (meta faulty))]
-	    (when (and (= :invalid-token status) device-token)
-      (delete-token-from-somewhere token))))
+(declare connection)
 
-	(def connection []
-	    (or @aps-connection
-	      (swap! aps-connection (fn [_]
-	                               (when-let [ssl-context (get-ssl-context)]
-	                                 (let [address (if (= :prod mode) (push/prod-address) (push/dev-address))]
-	                                   (push/create-connection address ssl-context
-	                                     :channel-inactive-handler (resent-handler edition-id)
-	                                     :error-handler error-handler)))
-	                               )))))	    
+(defn- resent-handler [_ re-sent]
+  (doseq [msg re-sent] (push/send (connection) msg)))
+
+(defn- error-handler [error]
+  (reset! aps-connection nil)
+  (let [status (:status error)
+        faulty (:faulty error)
+        device-token (:devive-token (meta faulty))]
+  (when (and (= :invalid-token status) device-token)
+  (delete-token-from-somewhere device-token))))
+
+(defn connection []
+    (or @aps-connection
+      (swap! aps-connection (fn [_]
+                               (when-let [ssl-context (get-ssl-context)]
+                                 (let [address (if (= :prod mode) (push/prod-address) (push/dev-address))]
+                                   (push/create-connection address ssl-context
+                                     :channel-inactive-handler resent-handler
+                                     :error-handler error-handler)))))))
+```
 
 I defined two handler functions. One which handle the re-sending of the messages and the other removes the cached connection and e.g. deletes tokens from my database when the token is invalid.
 

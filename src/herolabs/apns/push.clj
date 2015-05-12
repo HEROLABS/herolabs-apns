@@ -136,8 +136,9 @@
                   (:no-super (meta h)))
         (proxy-super exceptionCaught ctx cause)))))
 
-(defn- create-channel-initializer [ssl-engine protocoll-handler sent-queue id-gen time-out expires priority]
+(defn- create-channel-initializer
   "Creates a pipeline factory"
+  [ssl-engine protocoll-handler sent-queue id-gen time-out expires priority]
   (proxy [ChannelInitializer] []
     (initChannel [^SocketChannel channel]
       (let [pipeline (.pipeline channel)]
@@ -150,8 +151,9 @@
 (defn- default-exception-handler [cause] (info cause "An exception occured while sending push notification to the server."))
 
 
-(defn- connect [^InetSocketAddress address ^SSLContext ssl-context handlers event-loop id-generator time-out expires priority]
+(defn- connect
   "Creates a Netty Channel to connect to the server."
+  [^InetSocketAddress address ^SSLContext ssl-context handlers event-loop id-generator time-out expires priority]
   (let [ssl-engine (ssl-engine ssl-context :use-client-mode true)
         sent-queue (atom (sorted-set-by queue-entry-comparator))
         bootstrap (-> (Bootstrap.)

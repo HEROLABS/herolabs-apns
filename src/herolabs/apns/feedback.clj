@@ -17,8 +17,9 @@
 
 
 
-(defn- handler [^LinkedBlockingQueue queue]
+(defn- handler
   "Function to create a ChannelUpstreamHandler"
+  [^LinkedBlockingQueue queue]
   (proxy [io.netty.channel.ChannelInboundHandlerAdapter] []
     (channelRead [^ChannelHandlerContext ctx msg]
       (.put queue msg))
@@ -36,8 +37,9 @@
         :else nil))))
 
 
-(defn- create-channel-initializer [ssl-engine handler time-out]
+(defn- create-channel-initializer
   "Creates a pipeline factory"
+  [ssl-engine handler time-out]
   (proxy [ChannelInitializer] []
     (initChannel [^SocketChannel channel]
       (let [pipeline (.pipeline channel)]
@@ -47,8 +49,9 @@
           (.addLast "timeout" (IdleStateHandler. 0 time-out 0))
           (.addLast "protocollHandler" handler))))))
 
-(defn- connect [^InetSocketAddress address ^SSLContext ssl-context queue time-out event-loop]
+(defn- connect
   "creates a netty Channel to connect to the server."
+  [^InetSocketAddress address ^SSLContext ssl-context queue time-out event-loop]
   (try
     (let [ssl-engine (ssl-engine ssl-context :use-client-mode true)
           bootstrap (-> (Bootstrap.)
@@ -67,8 +70,9 @@
       (warn e "An error occure while connecting to Apple feedback service."))))
 
 
-(defn- read-feedback [^LinkedBlockingQueue queue ^Channel channel]
+(defn- read-feedback
   "Internal function to create a lazy-seq returning the data from the feedback service"
+  [^LinkedBlockingQueue queue ^Channel channel]
   (lazy-seq
     (if-let [next (.poll queue 10 TimeUnit/SECONDS)]
       (cons next (read-feedback queue channel))
@@ -79,10 +83,11 @@
 (def ^:private default-event-loop (NioEventLoopGroup.))
 
 
-(defn feedback [^InetSocketAddress address ^SSLContext ssl-context & {:keys [time-out event-loop]
+(defn feedback
+  "Creates a seq with the results from the feedback service"
+  [^InetSocketAddress address ^SSLContext ssl-context & {:keys [time-out event-loop]
                                                                       :or {time-out 30
                                                                            event-loop default-event-loop}}]
-  "Creates a seq with the results from the feedback service"
   (let [queue (LinkedBlockingQueue.)
         channel (connect address ssl-context queue time-out event-loop)]
     (read-feedback queue channel)))

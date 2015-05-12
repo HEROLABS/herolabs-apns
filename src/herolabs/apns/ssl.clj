@@ -55,23 +55,26 @@
       (.setKeyEntry "apple-push-service" key (char-array nil) certs))))
 
 
-(defn ssl-engine [^SSLContext context & {:keys [use-client-mode] :or {use-client-mode true}}]
+(defn ssl-engine
   "Creates an SSL engine"
+  [^SSLContext context & {:keys [use-client-mode] :or {use-client-mode true}}]
   (let [^SSLEngine engine (.createSSLEngine context)]
     (if use-client-mode
       (doto engine (.setUseClientMode use-client-mode))
       engine)))
 
-(defn ssl-engine-factory [^SSLContext context & {:keys [use-client-mode] :or {use-client-mode true}}]
+(defn ssl-engine-factory
   "Creates an SSL engine"
+  [^SSLContext context & {:keys [use-client-mode] :or {use-client-mode true}}]
   (fn [] (let [engine (.createSSLEngine context)]
           (if use-client-mode
             (doto engine (.setUseClientMode use-client-mode))
             engine))))
 
 
-(defn naive-trust-managers [& {:keys [trace] :or [trace false]}]
+(defn naive-trust-managers
   "Creates a very naive trust manager that will accept all certificates."
+  [& {:keys [trace] :or [trace false]}]
   (into-array (list (proxy [javax.net.ssl.X509TrustManager] []
                       (getAcceptedIssuers [] (make-array X509Certificate 0))
                       (checkClientTrusted [ chain auth-type]

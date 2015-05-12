@@ -14,3 +14,4 @@ pom.xml.asc
 *.ipr
 *.iws
 scrapbook.clj
+/.nrepl-port
